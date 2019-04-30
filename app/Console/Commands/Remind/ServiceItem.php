@@ -1,33 +1,36 @@
 <?php
 
-namespace App\Console\Commands;
+namespace App\Console\Commands\Remind;
 
 use Illuminate\Console\Command;
 
-class Card extends Command
+class ServiceItem extends Command
 {
     /**
      * The name and signature of the console command.
      *
      * @var string
      */
-    protected $signature = 'expire:card';
+    protected $signature = 'expire:service_item';
 
     /**
      * The console command description.
      *
      * @var string
      */
-    protected $description = '卡券到期提醒';
+    protected $description = '服务项目到期提醒';
 
     /**
      * Create a new command instance.
      *
      * @return void
      */
+    protected $jobData=[];
+    protected $db=null;
     public function __construct()
     {
         parent::__construct();
+        $this->db=new DB();
     }
 
     /**
@@ -37,6 +40,7 @@ class Card extends Command
      */
     public function handle()
     {
-        //
+        DB::enableQueryLog();
+        $this->db->table('c_awoke')->where()->get();
     }
 }

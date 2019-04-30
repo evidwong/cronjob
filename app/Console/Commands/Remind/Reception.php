@@ -1,24 +1,24 @@
 <?php
 
-namespace App\Console\Commands;
+namespace App\Console\Commands\Remind;
 
 use Illuminate\Console\Command;
 
-class ServiceItem extends Command
+class Reception extends Command
 {
     /**
      * The name and signature of the console command.
      *
      * @var string
      */
-    protected $signature = 'expire:service_item';
+    protected $signature = 'expire:reception';
 
     /**
      * The console command description.
      *
      * @var string
      */
-    protected $description = '服务项目到期提醒';
+    protected $description = '工单回访提醒';
 
     /**
      * Create a new command instance.
