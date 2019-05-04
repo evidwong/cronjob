@@ -91,7 +91,6 @@ class Card extends Base
                     )
                 );
                
-
                 $this->jobData[]=[
                     'cid'=>$row['cid'],
                     'job_from_id'=>$row['id'],

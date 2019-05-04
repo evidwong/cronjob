@@ -31,12 +31,12 @@ class Awoke extends Base
      *
      * @return void
      */
-    protected $jobData=[];
-    protected $db=null;
+    protected $jobData = [];
+    protected $db = null;
     public function __construct()
     {
         parent::__construct();
-        $this->db=new DB();
+        $this->db = new DB();
     }
 
     /**
@@ -103,24 +103,25 @@ class Awoke extends Base
                         'remark' => array('value' => '', 'color' => '')
                     )
                 ];
-                $this->jobData[]=[
-                    'cid'=>$row['cid'],
-                    'job_from_id'=>$row['id'],
-                    'job_property'=>'push',
-                    'job_type'=>'wechat',
-                    'job_content'=>json_encode($msg,JSON_UNESCAPED_UNICODE),
-                    'create_at'=>Carbon::now(),
-                    'comno'=>$row['COMNo'],
-                    'opt_uid'=>0,
-                    'status'=>0
+                $this->jobData[] = [
+                    'cid' => $row['cid'],
+                    'job_from_id' => $row['id'],
+                    'job_property' => 'push',
+                    'job_type' => 'wechat',
+                    'job_content' => json_encode($msg, JSON_UNESCAPED_UNICODE),
+                    'create_at' => Carbon::now(),
+                    'comno' => $row['COMNo'],
+                    'opt_uid' => 0,
+                    'status' => 0
                 ];
-                
             }
             $_conf = $this->confRedis->hGetAll('wechat_config:' . $row['cid']);
             if (in_array('sms', $pushType) && $row['HandPhone'] &&  $_conf && $_conf['sms_account'] && $_conf['sms_passcode'] && $_conf['sms_ip']) {
                 // 短信推送
                 $data = [];
-                $smsContent = '尊敬的' . $row['CustomerName'] . '，您的车辆：' . $row['RegisterNo'] . ' ' . $type . '将于' . $expireDate . '到期';
+                $customer = '尊敬的';
+                $customer .= $row['CustomerName'] ? : '客户';
+                $smsContent = '尊敬的' . $customer . '，您的车辆：' . $row['RegisterNo'] . ' ' . $type . '将于' . $expireDate . '到期';
                 if ($row['ComNo']) {
                     $store = $this->db->table('store')->where('comno', $row['ComNo'])->where('cid', $row['cid'])->first();
                     if ($store) {
@@ -137,7 +138,7 @@ class Awoke extends Base
                         $smsContent .= '【' . $_conf['sms_sign'] . '】';
                     }
                 }
-                $sendInfo=(mktime(true) * 1000) . '|' . (empty($_conf['sms_subaccount']) ? '*' : $_conf['sms_subaccount']) . '|' . $row['HandPhone'] . '|' . base64_encode(iconv('UTF-8', 'GBK//IGNORE', $smsContent));
+                $sendInfo = (mktime(true) * 1000) . '|' . (empty($_conf['sms_subaccount']) ? '*' : $_conf['sms_subaccount']) . '|' . $row['HandPhone'] . '|' . base64_encode(iconv('UTF-8', 'GBK//IGNORE', $smsContent));
                 $temps[$row['cid']][] = $sendInfo;
 
                 $data['sms_num'] = ceil(mb_strlen($smsContent, 'UTF-8') / 60);
@@ -152,20 +153,20 @@ class Awoke extends Base
                 $data['cid'] = $row['cid'];
                 $data['addtime'] = $time;
                 $this->smsRecords[] = $data;
-                $this->jobData[]=[
-                    'cid'=>$row['cid'],
-                    'job_from_id'=>$row['id'],
-                    'job_property'=>'push',
-                    'job_type'=>'sms',
-                    'job_content'=>json_encode($sendInfo,JSON_UNESCAPED_UNICODE),
-                    'create_at'=>Carbon::now(),
-                    'comno'=>$row['COMNo'],
-                    'opt_uid'=>0,
-                    'status'=>0
+                $this->jobData[] = [
+                    'cid' => $row['cid'],
+                    'job_from_id' => $row['id'],
+                    'job_property' => 'push',
+                    'job_type' => 'sms',
+                    'job_content' => json_encode($sendInfo, JSON_UNESCAPED_UNICODE),
+                    'create_at' => Carbon::now(),
+                    'comno' => $row['COMNo'],
+                    'opt_uid' => 0,
+                    'status' => 0
                 ];
             }
         });
-        if(empty($this->jobData)){
+        if (empty($this->jobData)) {
             return false;
         }
         $this->db->beginTransaction();
