@@ -5,14 +5,14 @@ namespace App\Console\Commands\Remind;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
-class Reception extends Base
+class Reception extends Remind
 {
     /**
      * The name and signature of the console command.
      *
      * @var string
      */
-    protected $signature = 'expire:reception';
+    protected $signature = 'remind:reception';
 
     /**
      * The console command description.

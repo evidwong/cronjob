@@ -5,7 +5,7 @@ namespace App\Console\Commands\Remind;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Redis;
 
-class Base extends Command
+class Remind extends Command
 {
     /**
      * The name and signature of the console command.
@@ -19,7 +19,7 @@ class Base extends Command
      *
      * @var string
      */
-    protected $description = 'Command description';
+    protected $description = '提醒基础类';
 
     /**
      * Create a new command instance.

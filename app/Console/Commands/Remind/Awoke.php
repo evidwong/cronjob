@@ -9,7 +9,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Carbon;
 
-class Awoke extends Base
+class Awoke extends Remind
 {
     /**
      * The name and signature of the console command.
@@ -17,7 +17,7 @@ class Awoke extends Base
      * @var string
      */
 
-    protected $signature = 'expire:awoke';
+    protected $signature = 'remind:awoke';
 
     /**
      * The console command description.

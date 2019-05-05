@@ -5,14 +5,14 @@ namespace App\Console\Commands\Remind;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
-class ServiceItem extends Base
+class ServiceItem extends Remind
 {
     /**
      * The name and signature of the console command.
      *
      * @var string
      */
-    protected $signature = 'expire:service_item';
+    protected $signature = 'remind:service_item';
 
     /**
      * The console command description.
@@ -57,9 +57,9 @@ class ServiceItem extends Base
             // 获取定时任务配置
             $cron = $this->redis->hGet('cron_config', 'company:' . $row['cid']);
             // 获取推送时间类型
-            $step = explode(',', $cron['credentialsExpire']['expire_step']);
+            $step = explode(',', $cron['jobExpire']['expire_step']);
             $days = ceil((strtotime($row['BookingDate']) - time()) / 86400);
-            if (!$cron || strtotime($cron['credentialsExpire']['start_time']) > time() || strtotime($cron['credentialsExpire']['end_time']) < time() || $cron['status'] <= 0 || ($step && !in_array($days, $step)) || ($cron['credentialsExpire']['start_at'] && date('H:i:s') < $cron['credentialsExpire']['start_at']) || ($cron['credentialsExpire']['end_at'] && date('H:i:s') > $cron['credentialsExpire']['end_at'])) {
+            if (!$cron || strtotime($cron['jobExpire']['start_time']) > time() || strtotime($cron['jobExpire']['end_time']) < time() || $cron['status'] <= 0 || ($step && !in_array($days, $step)) || ($cron['jobExpire']['start_at'] && date('H:i:s') < $cron['jobExpire']['start_at']) || ($cron['jobExpire']['end_at'] && date('H:i:s') > $cron['jobExpire']['end_at'])) {
                 // 获取不到“证件提醒”的推送设置；开始、结束时间不符合设置要求；已禁用；日期时间不符合推送设置要求；当前不符合推送时间设置要求
                 Log::info('不符合推送设置要求: ' . $row['cid']);
                 return false;
@@ -74,7 +74,10 @@ class ServiceItem extends Base
             $title .= '马上到期了';
             $pushType = explode(',', $cron['push_type']);
             $user = $this->mydb->table('member_openid')->where(['cid' => $row['cid'], 'phone' => $row['HandPhone']])->first();
-            $tpl = $this->confRedis->hGet('wechat_template:' . $row['cid'], 'credentials_notice');
+            $tpl = $this->confRedis->hGet('wechat_template:' . $row['cid'], 'service_expire_notice');
+            if ($row['ComNo']) {
+                $store = $this->db->table('store')->where('comno', $row['ComNo'])->where('cid', $row['cid'])->first();
+            }
             if ((!$pushType || in_array('wechat', $pushType)) && $user && $tpl) {
                 // 默认微信推送，或设置了有微信推送
                 $msg = [
@@ -107,14 +110,13 @@ class ServiceItem extends Base
                 $customer = '尊敬的';
                 $customer .= $row['CustomerName'] ? : '客户';
                 $smsContent = $customer . '，您的车辆：' . $row['RegisterNo'] . ' ' . $type . '将于' . $expireDate . '到期';
-                if ($row['ComNo']) {
-                    $store = $this->db->table('store')->where('comno', $row['ComNo'])->where('cid', $row['cid'])->first();
-                    if ($store) {
-                        $data['store_id'] = $store->id;
-                        $data['store_name'] = $store->branch;
-                        if ($store->tel) $smsContent .= '，如需办理请联系：' . $store->tel;
-                    }
+                
+                if ($store) {
+                    $data['store_id'] = $store->id;
+                    $data['store_name'] = $store->branch;
+                    if ($store->tel) $smsContent .= '，如需办理请联系：' . $store->tel;
                 }
+                
                 // 短信签名
                 if (trim($_conf['sms_sign'])) {
                     if ($_conf['sms_sign_location'] > 0) {
@@ -155,7 +157,7 @@ class ServiceItem extends Base
             return false;
         }
         $this->db->beginTransaction();
-        $result = $this->db->table('cron_job')->insert($this->jobData);
+        $result = $this->db->table('remind_job')->insert($this->jobData);
         if (!$result) {
             Log::info('create job fail');
             $this->db->rollBack();
