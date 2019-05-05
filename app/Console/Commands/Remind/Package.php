@@ -87,6 +87,20 @@ class Package extends Remind
                 ];
                 $this->jobData[] = [
                     'cid' => $row['cid'],
+                    'comno' => $row['COMNo'],
+                    'property' => '套餐到期提醒',
+                    'type' => 'sms',
+                    'action' => 'push',
+                    'from_id' => $row['id'],
+                    'function_code' => '',
+                    'relation_code' => '',
+                    'job' => json_encode($msg, JSON_UNESCAPED_UNICODE),
+                    'fail_content' => '',
+                    'create_at' => Carbon::now()->format('Y-m-d H:i:s'),
+                    'status' => 0,
+                    'opt_uid' => 0,
+
+                    'cid' => $row['cid'],
                     'job_from_id' => $row['id'],
                     'job_property' => 'push',
                     'job_type' => 'wechat',

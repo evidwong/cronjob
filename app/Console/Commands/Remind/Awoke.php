@@ -49,7 +49,7 @@ class Awoke extends Remind
         if (!$this->redis || !$this->confRedis) return false;
         // Log::useDailyFiles(storage_path('logs/job/expire_awoke.log'));
         DB::enableQueryLog();
-        $awokes = AwokeModel::whereRaw("TIMESTAMPDIFF(DAY,'" . date('Y-m-d H:i:s') . "',BookingDate) IN(30,15,7,3,1)")->whereRaw("TIMESTAMPDIFF(DAY,'" . date('Y-m-d H:i:s') . "',BookingDate)!=0")->whereIn('BusinessType', ['年审', '保险', '证件'])->get();
+        $awokes = AwokeModel::whereRaw("TIMESTAMPDIFF(DAY,'" . date('Y-m-d H:i:s') . "',BookingDate) IN(30,15,7,3,1)")->where('BookingDate','!=',date('Y-m-d H:i:s'))->whereIn('BusinessType', ['年审', '保险', '证件'])->get();
         // dd(DB::getQueryLog());
         Log::info('sql: ' . json_encode(DB::getQueryLog(), JSON_UNESCAPED_UNICODE));
         Log::info('data：' . json_encode($awokes, JSON_UNESCAPED_UNICODE));
@@ -105,14 +105,18 @@ class Awoke extends Remind
                 ];
                 $this->jobData[] = [
                     'cid' => $row['cid'],
-                    'job_from_id' => $row['id'],
-                    'job_property' => 'push',
-                    'job_type' => 'wechat',
-                    'job_content' => json_encode($msg, JSON_UNESCAPED_UNICODE),
-                    'create_at' => Carbon::now(),
                     'comno' => $row['COMNo'],
+                    'property' => $type . '到期提醒',
+                    'type' => 'wechat',
+                    'action' => 'push',
+                    'from_id' => $row['id'],
+                    'function_code' => '',
+                    'relation_code' => '',
+                    'job' => json_encode($msg, JSON_UNESCAPED_UNICODE),
+                    'fail_content' => '',
+                    'create_at' => Carbon::now()->format('Y-m-d H:i:s'),
+                    'status' => 0,
                     'opt_uid' => 0,
-                    'status' => 0
                 ];
             }
             $_conf = $this->confRedis->hGetAll('wechat_config:' . $row['cid']);
@@ -120,7 +124,7 @@ class Awoke extends Remind
                 // 短信推送
                 $data = [];
                 $customer = '尊敬的';
-                $customer .= $row['CustomerName'] ? : '客户';
+                $customer .= $row['CustomerName'] ?: '客户';
                 $smsContent = '尊敬的' . $customer . '，您的车辆：' . $row['RegisterNo'] . ' ' . $type . '将于' . $expireDate . '到期';
                 if ($row['ComNo']) {
                     $store = $this->db->table('store')->where('comno', $row['ComNo'])->where('cid', $row['cid'])->first();
@@ -155,14 +159,18 @@ class Awoke extends Remind
                 $this->smsRecords[] = $data;
                 $this->jobData[] = [
                     'cid' => $row['cid'],
-                    'job_from_id' => $row['id'],
-                    'job_property' => 'push',
-                    'job_type' => 'sms',
-                    'job_content' => json_encode($sendInfo, JSON_UNESCAPED_UNICODE),
-                    'create_at' => Carbon::now(),
                     'comno' => $row['COMNo'],
+                    'property' => $type . '到期提醒',
+                    'type' => 'sms',
+                    'action' => 'push',
+                    'from_id' => $row['id'],
+                    'function_code' => '',
+                    'relation_code' => '',
+                    'job' => json_encode($sendInfo, JSON_UNESCAPED_UNICODE),
+                    'fail_content' => '',
+                    'create_at' => Carbon::now()->format('Y-m-d H:i:s'),
+                    'status' => 0,
                     'opt_uid' => 0,
-                    'status' => 0
                 ];
             }
         });
@@ -170,7 +178,7 @@ class Awoke extends Remind
             return false;
         }
         $this->db->beginTransaction();
-        $result = $this->db->table('cron_job')->insert($this->jobData);
+        $result = $this->db->table('remind_job')->insert($this->jobData);
         if (!$result) {
             Log::info('create job fail');
             $this->db->rollBack();
