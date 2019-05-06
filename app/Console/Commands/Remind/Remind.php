@@ -4,6 +4,7 @@ namespace App\Console\Commands\Remind;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Redis;
+use Illuminate\Support\Facades\DB;
 
 class Remind extends Command
 {
@@ -107,5 +108,52 @@ class Remind extends Command
                 }
             }
         });
+    }
+    protected function cronConf($cid, $type = null)
+    {
+        if (!$cid) return false;
+        $rows = [];
+        if ($this->confRedis) {
+            if (!$type) {
+                $crons = $this->confRedis->hGetAll('cron:config:' . $cid);
+                foreach ($crons as &$cron) {
+                    $cron = json_decode($cron, true);
+                }
+            } else {
+                $crons = $this->confRedis->hGet('cron:config:' . $cid, $type);
+                $crons = json_decode($crons, true);
+            }
+            if ($crons) return $crons;
+            $rows = DB::table('cron')->where('cid', $cid)->get()->toArray();
+            $crons = [];
+            array_map(function ($row) use (&$crons, $type,$cid) {
+                $row = get_object_vars($row);
+                if ($type) {
+                    if ($row['type'] == $type) $crons = $row;
+                } else {
+                    $crons[$row['type']] = $row;
+                }
+                $this->confRedis->hSet('cron:config:' . $cid, $row['type'], json_encode($row, JSON_UNESCAPED_UNICODE));
+            }, $rows);
+            return $crons;
+        }
+
+        if (!$type) {
+            $crons = DB::table('cron')->where('cid', $cid)->get()->toArray();
+            array(function ($cron) use (&$rows) {
+                $rows[$cron['type']] = get_object_vars($cron);
+            }, $crons);
+        } else {
+            $rows = M('cron')->where(['cid' => $cid, 'type' => $type])->find();
+        }
+        return $rows;
+    }
+    protected function checkCondition($cid,$cron,$dayArray){
+        $step = explode(',', $cron['expire_step']);
+        if (!$cron || ($cron['start_time'] && strtotime($cron['start_time']) > time()) || ($cron['end_time'] && strtotime($cron['end_time']) < time()) || $cron['status'] <= 0 || ($step && !in_array($dayArray, $step)) || ($cron['start_at'] && date('H:i:s') < $cron['start_at']) || ($cron['end_at'] && date('H:i:s') > $cron['end_at'])) {
+            // 获取不到“证件提醒”的推送设置；开始、结束时间不符合设置要求；已禁用；日期时间不符合推送设置要求；当前不符合推送时间设置要求
+            Log::info('不符合推送设置要求: ' . $cid);
+            return false;
+        }
     }
 }

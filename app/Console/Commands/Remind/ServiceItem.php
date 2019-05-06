@@ -55,15 +55,12 @@ class ServiceItem extends Remind
         $temps = [];
         array_walk($awokes, function ($row, $index) use ($time, &$temps) {
             // 获取定时任务配置
-            $cron = $this->redis->hGet('cron_config', 'company:' . $row['cid']);
+            $cron = $this->cronConf($row['cid'],'jobExpire');
             // 获取推送时间类型
-            $step = explode(',', $cron['jobExpire']['expire_step']);
+            $step = explode(',', $cron['expire_step']);
             $days = ceil((strtotime($row['BookingDate']) - time()) / 86400);
-            if (!$cron || strtotime($cron['jobExpire']['start_time']) > time() || strtotime($cron['jobExpire']['end_time']) < time() || $cron['status'] <= 0 || ($step && !in_array($days, $step)) || ($cron['jobExpire']['start_at'] && date('H:i:s') < $cron['jobExpire']['start_at']) || ($cron['jobExpire']['end_at'] && date('H:i:s') > $cron['jobExpire']['end_at'])) {
-                // 获取不到“证件提醒”的推送设置；开始、结束时间不符合设置要求；已禁用；日期时间不符合推送设置要求；当前不符合推送时间设置要求
-                Log::info('不符合推送设置要求: ' . $row['cid']);
-                return false;
-            }
+            $check= $this->checkCondition($row['cid'],$cron,$days);
+            if(!$check) exit;
 
             $title = '';
             $title .= '尊敬的' . $row['CustomerName'] . '客户，您的';
@@ -73,10 +70,10 @@ class ServiceItem extends Remind
             $expireDate = date('Y-m-d', strtotime($row['BookingDate']));
             $title .= '马上到期了';
             $pushType = explode(',', $cron['push_type']);
-            $user = $this->mydb->table('member_openid')->where(['cid' => $row['cid'], 'phone' => $row['HandPhone']])->first();
+            $user = DB::table('member_openid')->where(['cid' => $row['cid'], 'phone' => $row['HandPhone']])->first();
             $tpl = $this->confRedis->hGet('wechat_template:' . $row['cid'], 'service_expire_notice');
             if ($row['ComNo']) {
-                $store = $this->db->table('store')->where('comno', $row['ComNo'])->where('cid', $row['cid'])->first();
+                $store = DB::table('store')->where('comno', $row['ComNo'])->where('cid', $row['cid'])->first();
             }
             if ((!$pushType || in_array('wechat', $pushType)) && $user && $tpl) {
                 // 默认微信推送，或设置了有微信推送
@@ -145,6 +142,7 @@ class ServiceItem extends Remind
                     'job_from_id' => $row['id'],
                     'job_property' => 'push',
                     'job_type' => 'sms',
+                    'phone'=>$row['HandPhone'],
                     'job_content' => json_encode($sendInfo, JSON_UNESCAPED_UNICODE),
                     'create_at' => Carbon::now(),
                     'comno' => $row['COMNo'],
@@ -156,31 +154,31 @@ class ServiceItem extends Remind
         if (empty($this->jobData)) {
             return false;
         }
-        $this->db->beginTransaction();
-        $result = $this->db->table('remind_job')->insert($this->jobData);
+        DB::beginTransaction();
+        $result = DB::table('remind_job')->insert($this->jobData);
         if (!$result) {
             Log::info('create job fail');
-            $this->db->rollBack();
+            DB::rollBack();
             return false;
         }
-        $result = $this->db->table('c_awoke')->whereIn('id', array_column($awokes, 'id'))->update(['PlanVisitDate' => date('Y-m-d')]);
+        $result = DB::table('c_awoke')->whereIn('id', array_column($awokes, 'id'))->update(['PlanVisitDate' => date('Y-m-d')]);
         if (!$result) {
             Log::info('update c_awoke planvisitdate fail');
-            $this->db->rollBack();
+            DB::rollBack();
             return false;
         }
         Log::info('execute sql: ' . json_encode(DB::getQueryLog(), JSON_UNESCAPED_UNICODE));
         if ($this->smsRecords) {
-            $result = $this->db->table('r_smsrecord')->insert($this->smsRecords);
+            $result = DB::table('r_smsrecord')->insert($this->smsRecords);
             Log::info('insert sms record: ' . $result);
             if (!$result) {
                 Log::info('insert sms record fail');
-                $this->db->rollBack();
+                DB::rollBack();
                 return false;
             }
         }
         Log::info('execute sql: ' . json_encode(DB::getQueryLog(), JSON_UNESCAPED_UNICODE));
-        $this->db->commit();
+        DB::commit();
         Log::info('End success');
     }
 }
