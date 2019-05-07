@@ -64,7 +64,7 @@ class Reception extends Remind
             $check = $this->checkCondition($cron, $days);
             if (!$check) {
                 Log::info('不符合推送设置要求: ' . $row['cid']);
-                // exit;
+                exit;
             }
 
             $reception = DB::table('c_receptionm')->where('id', $row['worker_id'])->first();

@@ -27,6 +27,7 @@ class Package extends Remind
      *
      * @return void
      */
+    protected $jobData = [];
     public function __construct()
     {
         parent::__construct();
@@ -42,17 +43,18 @@ class Package extends Remind
         if (!$this->redis || !$this->confRedis) return false;
         // Log::useDailyFiles(storage_path('logs/job/expire_awoke.log'));
         DB::enableQueryLog();
-        $MemberSetSalesCodes = $this->redis->hGetAll('MemberSetSalesM:MemberSetSalesCode:'.date('Ymd'));
-        if($MemberSetSalesCodes){
-            $rows = DB::table('c_membersetsalesm')->whereRaw("TIMESTAMPDIFF(DAY,'" . date('Y-m-d H:i:s') . "',LimitDate) IN(30,15,7,3,1)")->whereNotIn('MemberSetSalesCode',$MemberSetSalesCodes)->get();
-        }else{
-            $rows = DB::table('c_membersetsalesm')->whereRaw("TIMESTAMPDIFF(DAY,'" . date('Y-m-d H:i:s') . "',LimitDate) IN(30,15,7,3,1)")->get();
+        $MemberSetSalesCodes = $this->redis->hGetAll('MemberSetSalesM:MemberSetSalesCode:' . date('Ymd'));
+        if ($MemberSetSalesCodes) {
+            $rows = DB::table('c_membersetsalesm')->whereRaw("TIMESTAMPDIFF(DAY,'" . date('Y-m-d H:i:s') . "',LimitDate) IN(30,15,7,3,1)")->whereNotIn('MemberSetSalesCode', $MemberSetSalesCodes)->groupBy('MemberSetCode', 'cid')->get()->toArray();
+        } else {
+            $rows = DB::table('c_membersetsalesm')->whereRaw("TIMESTAMPDIFF(DAY,'" . date('Y-m-d H:i:s') . "',LimitDate) IN(30,15,7,3,1)")->groupBy('MemberSetCode', 'cid')->get()->toArray();
         }
-        if($rows->isEmpty()) return;
-        $rows=$rows->toArray();
-        array_walk($rows,function($row,$index) {
+        Log::info('execute sql: ' . json_encode(DB::getQueryLog(), JSON_UNESCAPED_UNICODE));
+        if (!$rows) return;
+        array_walk($rows, function ($row, $index) {
+            $row = get_object_vars($row);
             // 获取定时任务配置
-            $cron = $this->cronConf($row['cid'],'packageStatus');
+            $cron = $this->cronConf($row['cid'], 'packageStatus');
             // 获取推送时间类型
             $days = floor((strtotime(date('Y-m-d', strtotime($row['LimitDate']))) - strtotime(date('Y-m-d'))) / 86400);
 
@@ -63,8 +65,8 @@ class Package extends Remind
             }
             $title = '';
             $customer = '尊敬的';
-            $customer .= $row['CustomerName'] ? : '客户';
-            $title .= $customer.'，您的';
+            $customer .= $row['CustomerName'] ?: '客户';
+            $title .= $customer . '，您的';
             $title .= '服务 ' . $row['MemberSetName'];
             $title .= ' 套餐';
             $type = '套餐';
@@ -90,10 +92,10 @@ class Package extends Remind
                     'cid' => $row['cid'],
                     'comno' => $row['COMNo'],
                     'property' => '套餐到期提醒',
-                    'type' => 'sms',
+                    'type' => 'wechat',
                     'action' => 'push',
                     'from_id' => $row['id'],
-                    'phone'=>$row['HandPhone'],
+                    'phone' => $row['HandPhone'],
                     'function_code' => '',
                     'relation_code' => '',
                     'job' => json_encode($msg, JSON_UNESCAPED_UNICODE),
@@ -103,13 +105,13 @@ class Package extends Remind
                     'opt_uid' => 0,
                 ];
             }
-            $time=time();
+            $time = time();
             $_conf = $this->confRedis->hGetAll('wechat_config:' . $row['cid']);
             if (in_array('sms', $pushType) && $row['HandPhone'] &&  $_conf && $_conf['sms_account'] && $_conf['sms_passcode'] && $_conf['sms_ip']) {
                 // 短信推送
                 $data = [];
                 $customer = '尊敬的';
-                $customer .= $row['CustomerName'] ? : '客户';
+                $customer .= $row['CustomerName'] ?: '客户';
                 $smsContent = '尊敬的' . $customer . '，您的车辆：' . $row['RegisterNo'] . ' ' . $type . '将于' . $expireDate . '到期';
                 if ($row['COMNo']) {
                     $store = DB::table('store')->where('comno', $row['COMNo'])->where('cid', $row['cid'])->first();
@@ -144,13 +146,13 @@ class Package extends Remind
                 $this->smsRecords[] = $data;
                 $this->jobData[] = [
                     'cid' => $row['cid'],
-                    'comno' => $row['COMNo']?:'A00',
+                    'comno' => $row['COMNo'] ?: 'A00',
                     'property' => $type . '到期提醒',
                     'type' => 'sms',
                     'action' => 'push',
                     'from_id' => $row['id'],
-                    'phone'=>$row['HandPhone'],
-                    'flag_num'=>$data['sms_num'],
+                    'phone' => $row['HandPhone'],
+                    'flag_num' => $data['sms_num'],
                     'function_code' => '',
                     'relation_code' => '',
                     'job' => json_encode($sendInfo, JSON_UNESCAPED_UNICODE),
@@ -164,22 +166,13 @@ class Package extends Remind
         if (empty($this->jobData)) {
             return false;
         }
+        // dd($this->jobData);
         DB::beginTransaction();
-        $result = DB::table('cron_job')->insert($this->jobData);
+        $result = DB::table('remind_job')->insert($this->jobData);
         if (!$result) {
             Log::info('create job fail');
             DB::rollBack();
             return false;
-        }
-        Log::info('execute sql: ' . json_encode(DB::getQueryLog(), JSON_UNESCAPED_UNICODE));
-        if ($this->smsRecords) {
-            $result = DB::table('r_smsrecord')->insert($this->smsRecords);
-            Log::info('insert sms record: ' . $result);
-            if (!$result) {
-                Log::info('insert sms record fail');
-                DB::rollBack();
-                return false;
-            }
         }
         Log::info('execute sql: ' . json_encode(DB::getQueryLog(), JSON_UNESCAPED_UNICODE));
         DB::commit();
