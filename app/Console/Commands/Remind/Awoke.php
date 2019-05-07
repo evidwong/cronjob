@@ -49,23 +49,25 @@ class Awoke extends Remind
         if (!$this->redis || !$this->confRedis) return false;
         // Log::useDailyFiles(storage_path('logs/job/expire_awoke.log'));
         DB::enableQueryLog();
-        $awokes = AwokeModel::whereRaw("TIMESTAMPDIFF(DAY,'" . date('Y-m-d H:i:s') . "',BookingDate) IN(30,15,7,3,1)")->where('BookingDate', '!=', date('Y-m-d H:i:s'))->whereIn('BusinessType', ['年审', '保险', '证件'])->get();
+        $rows = AwokeModel::whereRaw("DATEDIFF(BookingDate,NOW()) IN(90,60,30,15,7,3,1)")->whereRaw("DATEDIFF(IFNULL(PlanVisitDate,'1970-01-01 00:00:00'),NOW())!=0")->whereIn('BusinessType', ['年审', '保险', '证件'])->get()->toArray();
         // dd(DB::getQueryLog());
         Log::info('sql: ' . json_encode(DB::getQueryLog(), JSON_UNESCAPED_UNICODE));
-        Log::info('data：' . json_encode($awokes, JSON_UNESCAPED_UNICODE));
-        if ($awokes->isEmpty()) return false;
-        $awokes = $awokes->toArray();
+        Log::info('data：' . json_encode($rows, JSON_UNESCAPED_UNICODE));
+        if (!$rows) return false;
 
         $time = time();
         $temps = [];
-        array_walk($awokes, function ($row, $index) use ($time, &$temps) {
+        array_walk($rows, function ($row, $index) use ($time, &$temps) {
             // 获取定时任务配置
             $cron = $this->cronConf($row['cid'], 'credentialsExpire');
             // 获取推送时间类型
-            
-            $days = ceil((strtotime($row['BookingDate']) - time()) / 86400);
-            $check= $this->checkCondition($row['cid'],$cron,$days);
-            if(!$check) exit;
+
+            $days = floor((strtotime(date('Y-m-d', strtotime($row['BookingDate']))) - strtotime(date('Y-m-d'))) / 86400);
+            $check = $this->checkCondition($cron, $days);
+            if (!$check) {
+                Log::info('不符合推送设置要求: ' . $row['cid']);
+                exit;
+            }
 
             $title = '';
             $title .= '尊敬的' . $row['CustomerName'] . '客户，您的';
@@ -87,11 +89,11 @@ class Awoke extends Remind
             $pushType = explode(',', $cron['push_type']);
             $user = DB::table('member_openid')->where(['cid' => $row['cid'], 'phone' => $row['HandPhone']])->first();
             $tpl = $this->confRedis->hGet('wechat_template:' . $row['cid'], 'credentials_notice');
-            if ((!$pushType || in_array('wechat', $pushType)) && $user && $tpl) {//
-                $user=get_object_vars($user);
+            if ((!$pushType || in_array('wechat', $pushType)) && $user && $tpl) { //
+
                 // 默认微信推送，或设置了有微信推送
                 $msg = [
-                    'touser' => $user['openid'],
+                    'touser' => $user->openid,
                     'template_id' => $tpl,
                     'url' => '',
                     'data' => array(
@@ -103,12 +105,13 @@ class Awoke extends Remind
                 ];
                 $this->jobData[] = [
                     'cid' => $row['cid'],
-                    'comno' => $row['ComNo']?:'A00',
+                    'comno' => $row['ComNo'] ?: 'A00',
                     'property' => $type . '到期提醒',
                     'type' => 'wechat',
                     'action' => 'push',
                     'from_id' => $row['id'],
-                    'phone'=>'HandPhone',
+                    'phone' => $row['HandPhone'],
+
                     'function_code' => '',
                     'relation_code' => '',
                     'job' => json_encode($msg, JSON_UNESCAPED_UNICODE),
@@ -158,11 +161,13 @@ class Awoke extends Remind
                 $this->smsRecords[] = $data;
                 $this->jobData[] = [
                     'cid' => $row['cid'],
-                    'comno' => $row['COMNo'],
+                    'comno' => $row['ComNo'] ?: 'A00',
                     'property' => $type . '到期提醒',
                     'type' => 'sms',
                     'action' => 'push',
                     'from_id' => $row['id'],
+                    'phone' => $row['HandPhone'],
+                    'flag_num' => $data['sms_num'],
                     'function_code' => '',
                     'relation_code' => '',
                     'job' => json_encode($sendInfo, JSON_UNESCAPED_UNICODE),
@@ -183,7 +188,7 @@ class Awoke extends Remind
             DB::rollBack();
             return false;
         }
-        $result = DB::table('c_awoke')->whereIn('id', array_column($awokes, 'id'))->update(['PlanVisitDate' => date('Y-m-d')]);
+        $result = DB::table('c_awoke')->whereIn('id', array_column($rows, 'id'))->update(['PlanVisitDate' => date('Y-m-d')]);
         if (!$result) {
             Log::info('update c_awoke planvisitdate fail');
             DB::rollBack();

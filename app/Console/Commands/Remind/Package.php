@@ -4,6 +4,7 @@ namespace App\Console\Commands\Remind;
 
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Carbon\Carbon;
 
 class Package extends Remind
 {
@@ -51,14 +52,14 @@ class Package extends Remind
         $rows=$rows->toArray();
         array_walk($rows,function($row,$index) {
             // 获取定时任务配置
-            $cron = $this->redis->hGet('cron_config', 'company:' . $row['cid']);
+            $cron = $this->cronConf($row['cid'],'packageStatus');
             // 获取推送时间类型
-            $step = explode(',', $cron['packageStatus']['expire_step']);
-            $days = ceil((strtotime($row['returnPlanDate']) - time()) / 86400);
-            if (!$cron || strtotime($cron['packageStatus']['start_time']) > time() || strtotime($cron['packageStatus']['end_time']) < time() || $cron['status'] <= 0 || ($step && !in_array($days, $step)) || ($cron['packageStatus']['start_at'] && date('H:i:s') < $cron['packageStatus']['start_at']) || ($cron['packageStatus']['end_at'] && date('H:i:s') > $cron['packageStatus']['end_at'])) {
-                // 获取不到“证件提醒”的推送设置；开始、结束时间不符合设置要求；已禁用；日期时间不符合推送设置要求；当前不符合推送时间设置要求
+            $days = floor((strtotime(date('Y-m-d', strtotime($row['LimitDate']))) - strtotime(date('Y-m-d'))) / 86400);
+
+            $check = $this->checkCondition($cron, $days);
+            if (!$check) {
                 Log::info('不符合推送设置要求: ' . $row['cid']);
-                return false;
+                exit;
             }
             $title = '';
             $customer = '尊敬的';
@@ -70,12 +71,12 @@ class Package extends Remind
             $expireDate = date('Y-m-d', strtotime($row['LimitDate']));
             $title .= '即将到期';
             $pushType = explode(',', $cron['push_type']);
-            $user = $this->mydb->table('member_openid')->where(['cid' => $row['cid'], 'phone' => $row['HandPhone']])->first();
-            $tpl = $this->confRedis->hGet('wechat_template:' . $row['cid'], 'credentials_notice');
+            $user = DB::table('member_openid')->where(['cid' => $row['cid'], 'phone' => $row['HandPhone']])->first();
+            $tpl = $this->confRedis->hGet('wechat_template:' . $row['cid'], 'package_status_notice');
             if ((!$pushType || in_array('wechat', $pushType)) && $user && $tpl) {
                 // 默认微信推送，或设置了有微信推送
                 $msg = [
-                    'touser' => $user['openid'],
+                    'touser' => $user->openid,
                     'template_id' => $tpl,
                     'url' => '',
                     'data' => array(
@@ -92,6 +93,7 @@ class Package extends Remind
                     'type' => 'sms',
                     'action' => 'push',
                     'from_id' => $row['id'],
+                    'phone'=>$row['HandPhone'],
                     'function_code' => '',
                     'relation_code' => '',
                     'job' => json_encode($msg, JSON_UNESCAPED_UNICODE),
@@ -99,16 +101,6 @@ class Package extends Remind
                     'create_at' => Carbon::now()->format('Y-m-d H:i:s'),
                     'status' => 0,
                     'opt_uid' => 0,
-
-                    'cid' => $row['cid'],
-                    'job_from_id' => $row['id'],
-                    'job_property' => 'push',
-                    'job_type' => 'wechat',
-                    'job_content' => json_encode($msg, JSON_UNESCAPED_UNICODE),
-                    'create_at' => Carbon::now(),
-                    'comno' => $row['COMNo'],
-                    'opt_uid' => 0,
-                    'status' => 0
                 ];
             }
             $time=time();
@@ -120,7 +112,7 @@ class Package extends Remind
                 $customer .= $row['CustomerName'] ? : '客户';
                 $smsContent = '尊敬的' . $customer . '，您的车辆：' . $row['RegisterNo'] . ' ' . $type . '将于' . $expireDate . '到期';
                 if ($row['COMNo']) {
-                    $store = $this->db->table('store')->where('comno', $row['COMNo'])->where('cid', $row['cid'])->first();
+                    $store = DB::table('store')->where('comno', $row['COMNo'])->where('cid', $row['cid'])->first();
                     if ($store) {
                         $data['store_id'] = $store->id;
                         $data['store_name'] = $store->branch;
@@ -152,39 +144,45 @@ class Package extends Remind
                 $this->smsRecords[] = $data;
                 $this->jobData[] = [
                     'cid' => $row['cid'],
-                    'job_from_id' => $row['id'],
-                    'job_property' => 'push',
-                    'job_type' => 'sms',
-                    'job_content' => json_encode($sendInfo, JSON_UNESCAPED_UNICODE),
-                    'create_at' => Carbon::now(),
-                    'comno' => $row['COMNo'],
+                    'comno' => $row['COMNo']?:'A00',
+                    'property' => $type . '到期提醒',
+                    'type' => 'sms',
+                    'action' => 'push',
+                    'from_id' => $row['id'],
+                    'phone'=>$row['HandPhone'],
+                    'flag_num'=>$data['sms_num'],
+                    'function_code' => '',
+                    'relation_code' => '',
+                    'job' => json_encode($sendInfo, JSON_UNESCAPED_UNICODE),
+                    'fail_content' => '',
+                    'create_at' => Carbon::now()->format('Y-m-d H:i:s'),
+                    'status' => 0,
                     'opt_uid' => 0,
-                    'status' => 0
                 ];
             }
         });
         if (empty($this->jobData)) {
             return false;
         }
-        $this->db->beginTransaction();
-        $result = $this->db->table('cron_job')->insert($this->jobData);
+        DB::beginTransaction();
+        $result = DB::table('cron_job')->insert($this->jobData);
         if (!$result) {
             Log::info('create job fail');
-            $this->db->rollBack();
+            DB::rollBack();
             return false;
         }
         Log::info('execute sql: ' . json_encode(DB::getQueryLog(), JSON_UNESCAPED_UNICODE));
         if ($this->smsRecords) {
-            $result = $this->db->table('r_smsrecord')->insert($this->smsRecords);
+            $result = DB::table('r_smsrecord')->insert($this->smsRecords);
             Log::info('insert sms record: ' . $result);
             if (!$result) {
                 Log::info('insert sms record fail');
-                $this->db->rollBack();
+                DB::rollBack();
                 return false;
             }
         }
         Log::info('execute sql: ' . json_encode(DB::getQueryLog(), JSON_UNESCAPED_UNICODE));
-        $this->db->commit();
+        DB::commit();
         Log::info('End success');
     }
 }

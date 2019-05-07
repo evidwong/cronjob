@@ -4,6 +4,7 @@ namespace App\Console\Commands\Remind;
 
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Carbon\Carbon;
 
 class ServiceItem extends Remind
 {
@@ -26,12 +27,12 @@ class ServiceItem extends Remind
      *
      * @return void
      */
-    protected $jobData=[];
-    protected $db=null;
+    protected $jobData = [];
+    protected $db = null;
     public function __construct()
     {
         parent::__construct();
-        $this->db=new DB();
+        $this->db = new DB();
     }
 
     /**
@@ -44,23 +45,26 @@ class ServiceItem extends Remind
         if (!$this->redis || !$this->confRedis) return false;
         // Log::useDailyFiles(storage_path('logs/job/expire_awoke.log'));
         DB::enableQueryLog();
-        $awokes = AwokeModel::whereRaw("TIMESTAMPDIFF(DAY,'" . date('Y-m-d H:i:s') . "',BookingDate) IN(30,15,7,3,1)")->whereRaw("TIMESTAMPDIFF(DAY,'" . date('Y-m-d H:i:s') . "',BookingDate)!=0")->whereNotIn('BusinessType', ['年审', '保险', '证件'])->get();
+        $rows = DB::table('c_awoke')->whereRaw("DATEDIFF(BookingDate,NOW()) IN(30,15,7,3,1)")->whereNotIn('BusinessType', ['年审', '保险', '证件'])->whereRaw("DATEDIFF(IFNULL(PlanVisitDate,'1970-01-01 00:00:00'),NOW())!=0")->groupBy('CustomerCode', 'Phone')->get()->toArray();
         // dd(DB::getQueryLog());
         Log::info('sql: ' . json_encode(DB::getQueryLog(), JSON_UNESCAPED_UNICODE));
-        Log::info('data：' . json_encode($awokes, JSON_UNESCAPED_UNICODE));
-        if ($awokes->isEmpty()) return false;
-        $awokes = $awokes->toArray();
+        Log::info('data：' . json_encode($rows, JSON_UNESCAPED_UNICODE));
+        if (!$rows) return false;
+        // dd($rows);
 
         $time = time();
         $temps = [];
-        array_walk($awokes, function ($row, $index) use ($time, &$temps) {
+        array_walk($rows, function ($row, $index) use ($time, &$temps) {
+            $row = get_object_vars($row);
             // 获取定时任务配置
-            $cron = $this->cronConf($row['cid'],'jobExpire');
+            $cron = $this->cronConf($row['cid'], 'jobExpire');
             // 获取推送时间类型
-            $step = explode(',', $cron['expire_step']);
-            $days = ceil((strtotime($row['BookingDate']) - time()) / 86400);
-            $check= $this->checkCondition($row['cid'],$cron,$days);
-            if(!$check) exit;
+            $days = floor((strtotime(date('Y-m-d', strtotime($row['BookingDate']))) - strtotime(date('Y-m-d'))) / 86400);
+            $check = $this->checkCondition($cron, $days);
+            if (!$check) {
+                Log::info('不符合推送设置要求: ' . $row['cid']);
+                exit;
+            }
 
             $title = '';
             $title .= '尊敬的' . $row['CustomerName'] . '客户，您的';
@@ -75,29 +79,35 @@ class ServiceItem extends Remind
             if ($row['ComNo']) {
                 $store = DB::table('store')->where('comno', $row['ComNo'])->where('cid', $row['cid'])->first();
             }
-            if ((!$pushType || in_array('wechat', $pushType)) && $user && $tpl) {
+            if ((!$pushType || in_array('wechat', $pushType)) && $user && $tpl) { //
                 // 默认微信推送，或设置了有微信推送
+                
                 $msg = [
-                    'touser' => $user['openid'],
+                    'touser' => $user->openid,
                     'template_id' => $tpl,
                     'url' => '',
                     'data' => array(
                         'first' => array('value' => $title, 'color' => ''),
-                        'keyword1' => array('value' => $type, 'color' => ''),
+                        'keyword1' => array('value' => $row['BusinessType'], 'color' => ''),
                         'keyword2' => array('value' => $expireDate, 'color' => '',),
                         'remark' => array('value' => '', 'color' => '')
                     )
                 ];
                 $this->jobData[] = [
                     'cid' => $row['cid'],
-                    'job_from_id' => $row['id'],
-                    'job_property' => 'push',
-                    'job_type' => 'wechat',
-                    'job_content' => json_encode($msg, JSON_UNESCAPED_UNICODE),
-                    'create_at' => Carbon::now(),
-                    'comno' => $row['COMNo'],
+                    'comno' => $row['ComNo'] ?: 'A00',
+                    'property' => $type . '到期提醒',
+                    'type' => 'wechat',
+                    'action' => 'push',
+                    'from_id' => $row['id'],
+                    'phone' => $row['HandPhone'],
+                    'function_code' => '',
+                    'relation_code' => '',
+                    'job' => json_encode($msg, JSON_UNESCAPED_UNICODE),
+                    'fail_content' => '',
+                    'create_at' => Carbon::now()->format('Y-m-d H:i:s'),
+                    'status' => 0,
                     'opt_uid' => 0,
-                    'status' => 0
                 ];
             }
             $_conf = $this->confRedis->hGetAll('wechat_config:' . $row['cid']);
@@ -105,15 +115,15 @@ class ServiceItem extends Remind
                 // 短信推送
                 $data = [];
                 $customer = '尊敬的';
-                $customer .= $row['CustomerName'] ? : '客户';
+                $customer .= $row['CustomerName'] ?: '客户';
                 $smsContent = $customer . '，您的车辆：' . $row['RegisterNo'] . ' ' . $type . '将于' . $expireDate . '到期';
-                
+
                 if ($store) {
                     $data['store_id'] = $store->id;
                     $data['store_name'] = $store->branch;
                     if ($store->tel) $smsContent .= '，如需办理请联系：' . $store->tel;
                 }
-                
+
                 // 短信签名
                 if (trim($_conf['sms_sign'])) {
                     if ($_conf['sms_sign_location'] > 0) {
@@ -139,15 +149,20 @@ class ServiceItem extends Remind
                 $this->smsRecords[] = $data;
                 $this->jobData[] = [
                     'cid' => $row['cid'],
-                    'job_from_id' => $row['id'],
-                    'job_property' => 'push',
-                    'job_type' => 'sms',
-                    'phone'=>$row['HandPhone'],
-                    'job_content' => json_encode($sendInfo, JSON_UNESCAPED_UNICODE),
-                    'create_at' => Carbon::now(),
-                    'comno' => $row['COMNo'],
+                    'comno' => $row['ComNo'] ?: 'A00',
+                    'property' => $type . '到期提醒',
+                    'type' => 'sms',
+                    'action' => 'push',
+                    'from_id' => $row['id'],
+                    'flag_num' => $data['sms_num'],
+                    'phone' => $row['HandPhone'],
+                    'function_code' => '',
+                    'relation_code' => '',
+                    'job' => json_encode($sendInfo, JSON_UNESCAPED_UNICODE),
+                    'fail_content' => '',
+                    'create_at' => Carbon::now()->format('Y-m-d H:i:s'),
+                    'status' => 0,
                     'opt_uid' => 0,
-                    'status' => 0
                 ];
             }
         });
@@ -161,9 +176,9 @@ class ServiceItem extends Remind
             DB::rollBack();
             return false;
         }
-        $result = DB::table('c_awoke')->whereIn('id', array_column($awokes, 'id'))->update(['PlanVisitDate' => date('Y-m-d')]);
-        if (!$result) {
-            Log::info('update c_awoke planvisitdate fail');
+        $result = DB::table('c_awoke')->whereRaw("DATEDIFF(BookingDate,NOW()) IN(30,15,7,3,1)")->whereRaw("DATEDIFF(IFNULL(PlanVisitDate,'1970-01-01 00:00:00'),NOW())!=0")->whereNotIn('BusinessType', ['年审', '保险', '证件'])->whereIn('HandPhone', array_column($rows, 'HandPhone'))->update(['PlanVisitDate' => date('Y-m-d')]);
+        if (false === $result) {
+            Log::info('update c_awoke PlanVisitDate fail');
             DB::rollBack();
             return false;
         }

@@ -4,6 +4,7 @@ namespace App\Console\Commands\Remind;
 
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Carbon\Carbon;
 
 class Reception extends Remind
 {
@@ -26,6 +27,7 @@ class Reception extends Remind
      *
      * @return void
      */
+    protected $jobData = [];
     public function __construct()
     {
         parent::__construct();
@@ -41,144 +43,108 @@ class Reception extends Remind
         if (!$this->redis || !$this->confRedis) return false;
         // Log::useDailyFiles(storage_path('logs/job/expire_awoke.log'));
         DB::enableQueryLog();
-        $ids = $this->redis->hGetAll('ReturnVisit:id:'.date('Ymd'));
-        if($ids){
-            $rows = DB::table('return_vist_plan')->whereRaw("TIMESTAMPDIFF(DAY,'" . date('Y-m-d H:i:s') . "',returnPlanDate) IN(30,15,7,3,1)")->whereNotIn('Vehicleid',$ids)->get();
-        }else{
-            $rows = DB::table('return_vist_plan')->whereRaw("TIMESTAMPDIFF(DAY,'" . date('Y-m-d H:i:s') . "',returnPlanDate) IN(30,15,7,3,1)")->whereNotIn('Vehicleid',$ids)->get();
+        $receptionIdRedis = 'return:visit:id:' . date('Ymd');
+        $ids = $this->redis->sMembers($receptionIdRedis);
+        if ($ids) {
+            $rows = DB::table('return_vist_plan')->whereRaw("DATEDIFF(returnPlanDate,NOW()) IN(30,15,7,3,1)")->whereNotIn('Vehicleid', $ids)->get()->toArray();
+        } else {
+            $rows = DB::table('return_vist_plan')->whereRaw("DATEDIFF(returnPlanDate,NOW()) IN(30,15,7,3,1)")->get()->toArray();
         }
-        if($rows->isEmpty()) return;
-        $rows=$rows->toArray();
-        array_walk($rows,function($row,$index) {
+        Log::info('sql: ' . json_encode(DB::getQueryLog(), JSON_UNESCAPED_UNICODE));
+        // dd($rows);
+        if (!$rows) return;
+        $actionId = [];
+        $redisExpireTime = strtotime(date("Y-m-d", strtotime("+1 day")));
+        array_walk($rows, function ($row, $index) use ($receptionIdRedis, &$actionId) {
+            $row = get_object_vars($row);
             // 获取定时任务配置
-            $cron = $this->redis->hGet('cron_config', 'company:' . $row['cid']);
+            $cron = $this->cronConf($row['cid'], 'needVisit');
             // 获取推送时间类型
-            $step = explode(',', $cron['needVisit']['expire_step']);
-            $days = ceil((strtotime($row['returnPlanDate']) - time()) / 86400);
-            if (!$cron || strtotime($cron['needVisit']['start_time']) > time() || strtotime($cron['needVisit']['end_time']) < time() || $cron['status'] <= 0 || ($step && !in_array($days, $step)) || ($cron['needVisit']['start_at'] && date('H:i:s') < $cron['needVisit']['start_at']) || ($cron['needVisit']['end_at'] && date('H:i:s') > $cron['needVisit']['end_at'])) {
-                // 获取不到“证件提醒”的推送设置；开始、结束时间不符合设置要求；已禁用；日期时间不符合推送设置要求；当前不符合推送时间设置要求
+            $days = floor((strtotime(date('Y-m-d', strtotime($row['returnPlanDate']))) - strtotime(date('Y-m-d'))) / 86400);
+            $check = $this->checkCondition($cron, $days);
+            if (!$check) {
                 Log::info('不符合推送设置要求: ' . $row['cid']);
-                return false;
+                // exit;
             }
-            if ($row['COMNo']) {
-                $store = $this->db->table('store')->where('comno', $row['COMNo'])->where('cid', $row['cid'])->first();
-            }
-            $title = '';
-            $customer = '尊敬的';
-            $customer .= $row['CustomerName'] ? : '客户';
-            $title .= $customer.'，您的';
-            $title .= '车辆 ' . $row['RegisterNo'];
-            $title .= ' 年审';
-            $type = '年审';
-            $expireDate = date('Y-m-d', strtotime($row['BookingDate']));
-            $title .= '马上到期了';
-            $pushType = explode(',', $cron['push_type']);
-            $user = $this->mydb->table('member_openid')->where(['cid' => $row['cid'], 'phone' => $row['HandPhone']])->first();
-            $tpl = $this->confRedis->hGet('wechat_template:' . $row['cid'], 'credentials_notice');
-            if ((!$pushType || in_array('wechat', $pushType)) && $user && $tpl) {
+
+            $reception = DB::table('c_receptionm')->where('id', $row['worker_id'])->first();
+            if (!$reception) return false;
+
+            $checkRedisMember = $this->redis->sIsMember($receptionIdRedis, $row['id']);
+            if ($checkRedisMember) return false;
+            $sAddRedis = $this->redis->sAdd($receptionIdRedis, $row['id']);
+            Log::info('sAdd: ' . $receptionIdRedis . ' ' . $row['id'] . ' result: ' . $sAddRedis);
+            if (!$sAddRedis) return false; // 添加到集合失败
+
+
+            $actionId[] = $row['id'];
+            $title = "服务回访\n";
+            $remark = '尊敬的';
+            $remark .= $row['CustomerName'] ?: '客户';
+            $remark .= '烦请点击‘详情’对我们的服务进行评价。感谢您选择我们服务，祝生活愉快！';
+            $type = '服务回访';
+            $orderTime = date('Y-m-d', strtotime($reception->InDate));
+            $pushType = isset($cron['push_type'])?explode(',', $cron['push_type']):[];
+            $user = DB::table('member_openid')->where(['cid' => $row['cid'], 'phone' => $row['phone']])->first();
+            $tpl = $this->confRedis->hGet('wechat_template:' . $row['cid'], 'order_evaluation_notice');
+            if ((!$pushType || in_array('wechat', $pushType)) && $user && $tpl) { //
                 // 默认微信推送，或设置了有微信推送
+                
                 $msg = [
-                    'touser' => $user['openid'],
+                    'touser' => $user->openid,
                     'template_id' => $tpl,
                     'url' => '',
                     'data' => array(
                         'first' => array('value' => $title, 'color' => ''),
-                        'keyword1' => array('value' => $type, 'color' => ''),
-                        'keyword2' => array('value' => $expireDate, 'color' => '',),
-                        'remark' => array('value' => '', 'color' => '')
+                        'keyword1' => array('value' => $reception->CReceptionCode, 'color' => ''),
+                        'keyword2' => array('value' => $orderTime, 'color' => '',),
+                        'remark' => array('value' => $remark, 'color' => '')
                     )
                 ];
                 $this->jobData[] = [
                     'cid' => $row['cid'],
-                    'job_from_id' => $row['id'],
-                    'job_property' => 'push',
-                    'job_type' => 'wechat',
-                    'job_content' => json_encode($msg, JSON_UNESCAPED_UNICODE),
-                    'create_at' => Carbon::now(),
-                    'comno' => $row['COMNo'],
+                    'comno' => $reception->COMNo,
+                    'property' => $type,
+                    'type' => 'wechat',
+                    'action' => 'push',
+                    'from_id' => $row['id'],
+                    'phone' => $row['phone'],
+                    'function_code' => '',
+                    'relation_code' => '',
+                    'job' => json_encode($msg, JSON_UNESCAPED_UNICODE),
+                    'fail_content' => '',
+                    'create_at' => Carbon::now()->format('Y-m-d H:i:s'),
+                    'status' => 0,
                     'opt_uid' => 0,
-                    'status' => 0
-                ];
-            }
-            $time=time();
-            $_conf = $this->confRedis->hGetAll('wechat_config:' . $row['cid']);
-            if (in_array('sms', $pushType) && $row['HandPhone'] &&  $_conf && $_conf['sms_account'] && $_conf['sms_passcode'] && $_conf['sms_ip']) {
-                // 短信推送
-                $data = [];
-                $customer = '尊敬的';
-                $customer .= $row['CustomerName'] ? : '客户';
-                $smsContent = '尊敬的' . $customer . '，您的车辆：' . $row['RegisterNo'] . ' ' . $type . '将于' . $expireDate . '到期';
-                
-                if ($store) {
-                    $data['store_id'] = $store->id;
-                    $data['store_name'] = $store->branch;
-                    if ($store->tel) $smsContent .= '，如需办理请联系：' . $store->tel;
-                }
-                
-                // 短信签名
-                if (trim($_conf['sms_sign'])) {
-                    if ($_conf['sms_sign_location'] > 0) {
-                        $smsContent = '&【' . $_conf['sms_sign'] . '】' . $smsContent;
-                    } else {
-                        $smsContent .= '【' . $_conf['sms_sign'] . '】';
-                    }
-                }
-                $sendInfo = (mktime(true) * 1000) . '|' . (empty($_conf['sms_subaccount']) ? '*' : $_conf['sms_subaccount']) . '|' . $row['HandPhone'] . '|' . base64_encode(iconv('UTF-8', 'GBK//IGNORE', $smsContent));
-                $temps[$row['cid']][] = $sendInfo;
-
-                $data['sms_num'] = ceil(mb_strlen($smsContent, 'UTF-8') / 60);
-                # 发送短信
-                $data['registerNo'] = $row['RegisterNo'];
-                $data['customerName'] = $row['RegisterNo'] ?: $row['CustomerName'];
-                $data['status'] = 0;
-                $data['pid'] = 0;
-                $data['type'] = $type;
-                $data['content'] = $smsContent;
-                $data['phone'] = $row['HandPhone'];
-                $data['cid'] = $row['cid'];
-                $data['addtime'] = $time;
-                $this->smsRecords[] = $data;
-                $this->jobData[] = [
-                    'cid' => $row['cid'],
-                    'job_from_id' => $row['id'],
-                    'job_property' => 'push',
-                    'job_type' => 'sms',
-                    'job_content' => json_encode($sendInfo, JSON_UNESCAPED_UNICODE),
-                    'create_at' => Carbon::now(),
-                    'comno' => $row['COMNo'],
-                    'opt_uid' => 0,
-                    'status' => 0
                 ];
             }
         });
         if (empty($this->jobData)) {
             return false;
         }
-        $this->db->beginTransaction();
-        $result = $this->db->table('cron_job')->insert($this->jobData);
+        // dd($this->jobData);
+        DB::beginTransaction();
+        $result = DB::table('remind_job')->insert($this->jobData);
         if (!$result) {
+            array_map(function ($v) use ($receptionIdRedis) {
+                $this->redis->sRem($receptionIdRedis, $v);
+            }, $actionId);
             Log::info('create job fail');
-            $this->db->rollBack();
+            DB::rollBack();
             return false;
         }
-        $result = $this->db->table('return_vist_plan')->whereIn('id', array_column($rows, 'id'))->update(['returnPlanDate' => date('Y-m-d')]);
+        $result = DB::table('return_vist_plan')->whereIn('id', $actionId)->update(['returnPlanDate' => date('Y-m-d')]);
         if (!$result) {
+            array_map(function ($v) use ($receptionIdRedis) {
+                $this->redis->sRem($receptionIdRedis, $v);
+            }, $actionId);
             Log::info('update return_vist_plan planvisitdate fail');
-            $this->db->rollBack();
+            DB::rollBack();
             return false;
         }
+        $this->redis->expireAt($receptionIdRedis, $redisExpireTime);
         Log::info('execute sql: ' . json_encode(DB::getQueryLog(), JSON_UNESCAPED_UNICODE));
-        if ($this->smsRecords) {
-            $result = $this->db->table('r_smsrecord')->insert($this->smsRecords);
-            Log::info('insert sms record: ' . $result);
-            if (!$result) {
-                Log::info('insert sms record fail');
-                $this->db->rollBack();
-                return false;
-            }
-        }
-        Log::info('execute sql: ' . json_encode(DB::getQueryLog(), JSON_UNESCAPED_UNICODE));
-        $this->db->commit();
+        DB::commit();
         Log::info('End success');
     }
 }
