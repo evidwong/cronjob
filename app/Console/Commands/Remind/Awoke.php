@@ -68,39 +68,41 @@ class Awoke extends Remind
                 Log::info('不符合推送设置要求: ' . $row['cid']);
                 exit;
             }
+            $company = $this->confRedis->hGetAll('company:' . $row['cid']);
+            if (!$company) return false;
 
-            $title = '';
-            $title .= '尊敬的' . $row['CustomerName'] . '客户，您的';
-            $title .= '车辆 ' . $row['RegisterNo'];
-            if ($row['BusinessType'] == '年审') {
-                $title .= ' 年审';
-                $type = '年审';
-            } else if ($row['BusinessType'] == '证件') {
-                $title .= '证件';
-                $type = '证件';
-            } else if ($row['BusinessType'] == '保险') {
-                $title .= '保险';
-                $type = '保险';
-            } else {
-                return false;
+            if ($row['ComNo']) {
+                $store = DB::table('store')->where('comno', $row['ComNo'])->where('cid', $row['cid'])->first();
             }
+            $customer = $row['CustomerName'] ?: '客户';
+            $type = $row['BusinessType'];
+            if (!$type) return false;
+
             $expireDate = date('Y-m-d', strtotime($row['BookingDate']));
-            $title .= '马上到期了';
+
             $pushType = explode(',', $cron['push_type']);
             $user = DB::table('member_openid')->where(['cid' => $row['cid'], 'phone' => $row['HandPhone']])->first();
             $tpl = $this->confRedis->hGet('wechat_template:' . $row['cid'], 'credentials_notice');
-            if ((!$pushType || in_array('wechat', $pushType)) && $user && $tpl) { //
-
+            if ((!$pushType || in_array('wechat', $pushType)) && $user && $tpl) {
                 // 默认微信推送，或设置了有微信推送
+                $title = '';
+                $title .= '尊敬的' . $customer . '，您的车辆 ' . $row['RegisterNo'] . ' ' . $type;
+                $title .= '即将到期';
+                $remark = '';
+                if ($store) {
+                    if ($store->tel) $remark .= '如有问题请联系：' . $store->tel;
+                } else {
+                    if ($company['tel']) $remark .= '如有问题请联系：' . $company['tel'];
+                }
                 $msg = [
                     'touser' => $user->openid,
                     'template_id' => $tpl,
-                    'url' => '',
+                    'url' => config('app.url') . '/User/Notifycenter/index/amcc/' . $row['cid'],
                     'data' => array(
                         'first' => array('value' => $title, 'color' => ''),
                         'keyword1' => array('value' => $type, 'color' => ''),
                         'keyword2' => array('value' => $expireDate, 'color' => '',),
-                        'remark' => array('value' => '', 'color' => '')
+                        'remark' => array('value' => "\n感谢选择我们的服务！\n" .$remark, 'color' => '')
                     )
                 ];
                 $this->jobData[] = [
@@ -111,7 +113,7 @@ class Awoke extends Remind
                     'action' => 'push',
                     'from_id' => $row['id'],
                     'phone' => $row['HandPhone'],
-
+                    'limit_at' => $row['BookingDate'],
                     'function_code' => '',
                     'relation_code' => '',
                     'job' => json_encode($msg, JSON_UNESCAPED_UNICODE),
@@ -125,16 +127,14 @@ class Awoke extends Remind
             if (in_array('sms', $pushType) && $row['HandPhone'] &&  $_conf && $_conf['sms_account'] && $_conf['sms_passcode'] && $_conf['sms_ip']) {
                 // 短信推送
                 $data = [];
-                $customer = '尊敬的';
-                $customer .= $row['CustomerName'] ?: '客户';
-                $smsContent = '尊敬的' . $customer . '，您的车辆：' . $row['RegisterNo'] . ' ' . $type . '将于' . $expireDate . '到期';
-                if ($row['ComNo']) {
-                    $store = DB::table('store')->where('comno', $row['ComNo'])->where('cid', $row['cid'])->first();
-                    if ($store) {
-                        $data['store_id'] = $store->id;
-                        $data['store_name'] = $store->branch;
-                        if ($store->tel) $smsContent .= '，如需办理请联系：' . $store->tel;
-                    }
+                $smsContent = $customer . '，您的：' . $row['RegisterNo'] . ' ' . $type . ' ' . $expireDate . '到期';
+
+                if ($store) {
+                    $data['store_id'] = $store->id;
+                    $data['store_name'] = $store->branch;
+                    if ($store->tel) $smsContent .= '，请联系：' . $store->tel;
+                } else {
+                    if ($company['tel']) $smsContent .= '，请联系：' . $company['tel'];
                 }
                 // 短信签名
                 if (trim($_conf['sms_sign'])) {
@@ -153,7 +153,7 @@ class Awoke extends Remind
                 $data['customerName'] = $row['RegisterNo'] ?: $row['CustomerName'];
                 $data['status'] = 0;
                 $data['pid'] = 0;
-                $data['type'] = $type;
+                $data['type'] = $type . '到期提醒';
                 $data['content'] = $smsContent;
                 $data['phone'] = $row['HandPhone'];
                 $data['cid'] = $row['cid'];
@@ -168,6 +168,8 @@ class Awoke extends Remind
                     'from_id' => $row['id'],
                     'phone' => $row['HandPhone'],
                     'flag_num' => $data['sms_num'],
+                    'flag_time' => $time,
+                    'limit_at' => $row['BookingDate'],
                     'function_code' => '',
                     'relation_code' => '',
                     'job' => json_encode($sendInfo, JSON_UNESCAPED_UNICODE),

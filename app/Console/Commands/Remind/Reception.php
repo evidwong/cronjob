@@ -66,34 +66,29 @@ class Reception extends Remind
                 Log::info('不符合推送设置要求: ' . $row['cid']);
                 exit;
             }
-
+            $customer = $row['CustomerName'] ?: '客户';
             $reception = DB::table('c_receptionm')->where('id', $row['worker_id'])->first();
             if (!$reception) return false;
 
             $checkRedisMember = $this->redis->sIsMember($receptionIdRedis, $row['id']);
             if ($checkRedisMember) return false;
-            $sAddRedis = $this->redis->sAdd($receptionIdRedis, $row['id']);
-            Log::info('sAdd: ' . $receptionIdRedis . ' ' . $row['id'] . ' result: ' . $sAddRedis);
-            if (!$sAddRedis) return false; // 添加到集合失败
-
 
             $actionId[] = $row['id'];
             $title = "服务回访\n";
             $remark = '尊敬的';
-            $remark .= $row['CustomerName'] ?: '客户';
-            $remark .= '烦请点击‘详情’对我们的服务进行评价。感谢您选择我们服务，祝生活愉快！';
+            $remark .= $customer;
+            $remark .= '，烦请点击‘详情’对我们的服务进行评价。感谢您选择我们服务，祝生活愉快！';
             $type = '服务回访';
             $orderTime = date('Y-m-d', strtotime($reception->InDate));
-            $pushType = isset($cron['push_type'])?explode(',', $cron['push_type']):[];
+            $pushType = isset($cron['push_type']) ? explode(',', $cron['push_type']) : [];
             $user = DB::table('member_openid')->where(['cid' => $row['cid'], 'phone' => $row['phone']])->first();
             $tpl = $this->confRedis->hGet('wechat_template:' . $row['cid'], 'order_evaluation_notice');
-            if ((!$pushType || in_array('wechat', $pushType)) && $user && $tpl) { //
+            if ((!$pushType || in_array('wechat', $pushType)) && $user && $tpl) {
                 // 默认微信推送，或设置了有微信推送
-                
                 $msg = [
                     'touser' => $user->openid,
                     'template_id' => $tpl,
-                    'url' => '',
+                    'url' => config('app.url') . "/User/Order/detail/amcc/" . $row['cid'] . ".html?orderid=" + $reception->CReceptionCode + "&recdate=" + $reception->RecDate + "&functioncode=" + $reception->FunctionCode,
                     'data' => array(
                         'first' => array('value' => $title, 'color' => ''),
                         'keyword1' => array('value' => $reception->CReceptionCode, 'color' => ''),
@@ -109,8 +104,9 @@ class Reception extends Remind
                     'action' => 'push',
                     'from_id' => $row['id'],
                     'phone' => $row['phone'],
-                    'function_code' => '',
-                    'relation_code' => '',
+                    'limit_at' => $row['returnPlanDate'],
+                    'function_code' => $reception->FunctionCode,
+                    'relation_code' => $reception->CReceptionCode,
                     'job' => json_encode($msg, JSON_UNESCAPED_UNICODE),
                     'fail_content' => '',
                     'create_at' => Carbon::now()->format('Y-m-d H:i:s'),
@@ -122,6 +118,9 @@ class Reception extends Remind
         if (empty($this->jobData)) {
             return false;
         }
+        array_map(function ($v) use ($receptionIdRedis) {
+            $this->redis->sAdd($receptionIdRedis, $v);
+        }, $actionId);
         // dd($this->jobData);
         DB::beginTransaction();
         $result = DB::table('remind_job')->insert($this->jobData);

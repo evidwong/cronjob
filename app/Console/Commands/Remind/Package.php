@@ -41,18 +41,18 @@ class Package extends Remind
     public function handle()
     {
         if (!$this->redis || !$this->confRedis) return false;
-        // Log::useDailyFiles(storage_path('logs/job/expire_awoke.log'));
         DB::enableQueryLog();
-        $MemberSetSalesCodes = $this->redis->hGetAll('MemberSetSalesM:MemberSetSalesCode:' . date('Ymd'));
-        if ($MemberSetSalesCodes) {
-            $rows = DB::table('c_membersetsalesm')->whereRaw("TIMESTAMPDIFF(DAY,'" . date('Y-m-d H:i:s') . "',LimitDate) IN(30,15,7,3,1)")->whereNotIn('MemberSetSalesCode', $MemberSetSalesCodes)->groupBy('MemberSetCode', 'cid')->get()->toArray();
-        } else {
-            $rows = DB::table('c_membersetsalesm')->whereRaw("TIMESTAMPDIFF(DAY,'" . date('Y-m-d H:i:s') . "',LimitDate) IN(30,15,7,3,1)")->groupBy('MemberSetCode', 'cid')->get()->toArray();
-        }
+        $rows = DB::table('c_membersetsalesm')->whereRaw("TIMESTAMPDIFF(DAY,'" . date('Y-m-d H:i:s') . "',LimitDate) IN(30,15,7,3,1)")->groupBy('MemberSetCode', 'cid')->get()->toArray();
         Log::info('execute sql: ' . json_encode(DB::getQueryLog(), JSON_UNESCAPED_UNICODE));
         if (!$rows) return;
-        array_walk($rows, function ($row, $index) {
+        $MemberSetCode = [];
+        $redisExpireTime = strtotime(date("Y-m-d", strtotime("+1 day")));
+        array_walk($rows, function ($row, $index) use (&$MemberSetCode) {
             $row = get_object_vars($row);
+            $redisSet = 'remind:membersetsalescode:' . date('Ymd') . ':' . $row['cid'];
+            $this->redis->sIsMember($redisSet, $row['MemberSetCode']);
+            $isMember = $this->redis->sIsMember($redisSet, $row['MemberSetCode']);
+            if ($isMember) return false;
             // 获取定时任务配置
             $cron = $this->cronConf($row['cid'], 'packageStatus');
             // 获取推送时间类型
@@ -63,15 +63,21 @@ class Package extends Remind
                 Log::info('不符合推送设置要求: ' . $row['cid']);
                 exit;
             }
-            $title = '';
-            $customer = '尊敬的';
-            $customer .= $row['CustomerName'] ?: '客户';
-            $title .= $customer . '，您的';
-            $title .= '服务 ' . $row['MemberSetName'];
-            $title .= ' 套餐';
+            $company = $this->confRedis->hGetAll('company:' . $row['cid']);
+            if (!$company) return false;
+            $MemberSetCode[$row['cid']] = $row['MemberSetCode'];
+            $storeInfo = '';
+            if (isset($row['COMNo']) && $row['COMNo']) {
+                $store = DB::table('store')->where('comno', $row['COMNo'])->where('cid', $row['cid'])->first();
+                if ($store) {
+                    if ($store->tel) $storeInfo .= "如有问题请联系 【" . $store->branch . "】 " . $store->tel;
+                }
+            } else {
+                if ($company['tel']) $storeInfo .= '如有问题请联系：' . $company['tel'];
+            }
+            $title = '尊敬的客户，您的套餐即将到期';
             $type = '套餐';
             $expireDate = date('Y-m-d', strtotime($row['LimitDate']));
-            $title .= '即将到期';
             $pushType = explode(',', $cron['push_type']);
             $user = DB::table('member_openid')->where(['cid' => $row['cid'], 'phone' => $row['HandPhone']])->first();
             $tpl = $this->confRedis->hGet('wechat_template:' . $row['cid'], 'package_status_notice');
@@ -80,12 +86,14 @@ class Package extends Remind
                 $msg = [
                     'touser' => $user->openid,
                     'template_id' => $tpl,
-                    'url' => '',
+                    'url' => config('app.url') . '/User/Package/index/amcc/' . $row['cid'],
                     'data' => array(
                         'first' => array('value' => $title, 'color' => ''),
-                        'keyword1' => array('value' => $type, 'color' => ''),
-                        'keyword2' => array('value' => $expireDate, 'color' => '',),
-                        'remark' => array('value' => '', 'color' => '')
+                        'keyword1' => array('value' => $row['CustomerName'], 'color' => ''),
+                        'keyword2' => array('value' => $row['MemberSetName'], 'color' => '',),
+                        'keyword3' => array('value' => $expireDate, 'color' => '',),
+                        'keyword4' => array('value' => '即将到期', 'color' => '',),
+                        'remark' => array('value' => "\n感谢选择我们的服务！\n" . $storeInfo, 'color' => '')
                     )
                 ];
                 $this->jobData[] = [
@@ -96,6 +104,7 @@ class Package extends Remind
                     'action' => 'push',
                     'from_id' => $row['id'],
                     'phone' => $row['HandPhone'],
+                    'limit_at' => $row['LimitDate'],
                     'function_code' => '',
                     'relation_code' => '',
                     'job' => json_encode($msg, JSON_UNESCAPED_UNICODE),
@@ -110,16 +119,13 @@ class Package extends Remind
             if (in_array('sms', $pushType) && $row['HandPhone'] &&  $_conf && $_conf['sms_account'] && $_conf['sms_passcode'] && $_conf['sms_ip']) {
                 // 短信推送
                 $data = [];
-                $customer = '尊敬的';
-                $customer .= $row['CustomerName'] ?: '客户';
-                $smsContent = '尊敬的' . $customer . '，您的车辆：' . $row['RegisterNo'] . ' ' . $type . '将于' . $expireDate . '到期';
-                if ($row['COMNo']) {
-                    $store = DB::table('store')->where('comno', $row['COMNo'])->where('cid', $row['cid'])->first();
-                    if ($store) {
-                        $data['store_id'] = $store->id;
-                        $data['store_name'] = $store->branch;
-                        if ($store->tel) $smsContent .= '，如需办理请联系：' . $store->tel;
-                    }
+                $smsContent = '尊敬的客户，您的 ' . $row['MemberSetName'] . ' 套餐将于' . $expireDate . '到期';
+                if ($store) {
+                    $data['store_id'] = $store->id;
+                    $data['store_name'] = $store->branch;
+                    if ($store->tel) $smsContent .= '，请联系：' . $store->tel;
+                } else {
+                    if ($company['tel']) $smsContent .= '请联系：' . $company['tel'];
                 }
                 // 短信签名
                 if (trim($_conf['sms_sign'])) {
@@ -153,6 +159,7 @@ class Package extends Remind
                     'from_id' => $row['id'],
                     'phone' => $row['HandPhone'],
                     'flag_num' => $data['sms_num'],
+                    'limit_at' => $row['LimitDate'],
                     'function_code' => '',
                     'relation_code' => '',
                     'job' => json_encode($sendInfo, JSON_UNESCAPED_UNICODE),
@@ -166,16 +173,26 @@ class Package extends Remind
         if (empty($this->jobData)) {
             return false;
         }
-        // dd($this->jobData);
-        DB::beginTransaction();
+        array_walk($MemberSetCode, function ($row, $cid) use ($redisExpireTime) {
+            $redisSet = 'remind:membersetsalescode:' . date('Ymd') . ':' . $cid;
+            array_map(function ($v) use ($redisSet) {
+                $this->redis->sAdd($redisSet, $v);
+            }, $row);
+            $this->redis->expireAt($redisSet, $redisExpireTime);
+        });
         $result = DB::table('remind_job')->insert($this->jobData);
         if (!$result) {
+            array_walk($MemberSetCode, function ($row, $cid) {
+                $redisSet = 'remind:membersetsalescode:' . date('Ymd') . ':' . $cid;
+                array_map(function ($v) use ($redisSet) {
+                    $this->redis->sRem($redisSet, $v);
+                }, $row);
+            });
             Log::info('create job fail');
             DB::rollBack();
             return false;
         }
         Log::info('execute sql: ' . json_encode(DB::getQueryLog(), JSON_UNESCAPED_UNICODE));
-        DB::commit();
         Log::info('End success');
     }
 }

@@ -44,31 +44,18 @@ class Card extends Remind
     {
         if (!$this->redis || !$this->confRedis) return false;
         DB::enableQueryLog();
-        // $phones=$this->redis->sMembers('');
         $rows = DB::table('coupon_card')->select(DB::raw("COUNT(id) AS num,DATEDIFF(FROM_UNIXTIME(expire_time,'%Y-%m-%d'),NOW()) AS expire_day,FROM_UNIXTIME(expire_time,'%Y-%m-%d') AS expired,phone,cid,registerno,nickname"))->whereRaw("DATEDIFF(FROM_UNIXTIME(expire_time,'%Y-%m-%d %H:%I:%S'),NOW()) IN(30,15,7,3,1)")->where('remind_at', '!=', Carbon::now()->format('Y-m-d'))->groupBy('phone', 'cid')->get()->toArray();
         Log::info('sql: ' . json_encode(DB::getQueryLog(), JSON_UNESCAPED_UNICODE));
         if (!$rows) return false;
         $redisExpireTime = strtotime(date("Y-m-d", strtotime("+1 day")));
 
-        DB::beginTransaction();
 
-        array_walk($rows, function ($row, $index) use ($redisExpireTime) {
+        $phones = [];
+        array_walk($rows, function ($row, $index) use (&$phones) {
             $row = get_object_vars($row);
             $redisSet = 'remind:couponcard:' . date('Ymd') . ':' . $row['cid'];
-            $checkRedisMember = $this->redis->sIsMember($redisSet, $row['phone']);
-            Log::info('sIsMember: ' . $redisSet . ' ' . $row['phone'] . ' result: ' . $checkRedisMember);
-            if ($checkRedisMember) return false;
-            $sAddRedis = $this->redis->sAdd($redisSet, $row['phone']);
-            Log::info('sAdd: ' . $redisSet . ' ' . $row['phone'] . ' result: ' . $sAddRedis);
-            if (!$sAddRedis) exit(); // 添加到集合失败
-
-            $setExpireAt = $this->redis->expireAt($redisSet, $redisExpireTime);
-            Log::info('expireAt: ' . $redisSet . ' result: ' . $setExpireAt);
-            if (!$setExpireAt) {
-                $result = $this->redis->sRem($redisSet, $row['phone']);
-                Log::info('sRem: ' . $redisSet . ' ' . $row['phone'] . ' result: ' . $result);
-                exit(); // 添加到集合失败
-            }
+            $isMember=$this->redis->sIsMember($redisSet,$row['phone']);
+            if($isMember) return false;
             $cron = $this->cronConf($row['cid'], 'jobExpire');
             // 获取推送时间类型
             $days = $row['expire_day'];
@@ -78,23 +65,29 @@ class Card extends Remind
                 exit;
             }
 
+            $company = $this->confRedis->hGetAll('company:' . $row['cid']);
+            if (!$company) return false;
+
+            $phones[$row['cid']][] = $row['phone'];
+
             $storeInfo = '';
             $store = null;
             if (isset($row['comno']) && $row['comno']) {
                 $store = DB::table('store')->where('comno', $row['comno'])->where('cid', $row['cid'])->first();
                 if ($store) {
-                    if ($store->tel) $storeInfo .= " 【" . $store->branch . "】 " . $store->tel;
+                    if ($store->tel) $storeInfo .= "如有问题请联系 【" . $store->branch . "】 " . $store->tel;
                 }
+            } else {
+                if ($company['tel']) $storeInfo .= '如有问题请联系：' . $company['tel'];
             }
             $pushType = explode(',', $cron['push_type']);
             $user = DB::table('member_openid')->where(['cid' => $row['cid'], 'phone' => $row['phone']])->first();
             Log::info('sql: ' . json_encode(DB::getQueryLog(), JSON_UNESCAPED_UNICODE));
             $tpl = $this->confRedis->hGet('wechat_template:' . $row['cid'], 'service_expire_notice');
             if ((!$pushType || in_array('wechat', $pushType)) && $user && $tpl) { //
-                
-                $url = config('app.url') . '/user/coupon/couponList/amcc/' . $row['cid'];
-                $customer = '尊敬的';
-                $customer .= $row['registerno'] ? $row['registerno'] . '车主' : '客户';
+
+                $url = config('app.url') . '/User/Coupon/couponList/amcc/' . $row['cid'];
+                $customer = '尊敬的客户';
                 $num = $row['num'];
                 $msg = array(
                     'touser' => $user->openid,
@@ -116,6 +109,7 @@ class Card extends Remind
                     'action' => 'push',
                     'from_id' => 0,
                     'phone' => $row['phone'],
+                    'limit_at' => $row['expired'],
                     'function_code' => '',
                     'relation_code' => '',
                     'job' => json_encode($msg, JSON_UNESCAPED_UNICODE),
@@ -123,21 +117,39 @@ class Card extends Remind
                     'create_at' => Carbon::now()->format('Y-m-d H:i:s'),
                 ];
             }
-            $result = DB::table('coupon_card')->whereRaw("DATEDIFF(FROM_UNIXTIME(expire_time,'%Y-%m-%d %H:%I:%S'),NOW()) IN(30,15,7,3,1)")->where('phone', $row['phone'])->update(['remind_at' => date('Y-m-d')]);
+        });
+        if (empty($this->jobData)) {
+            return false;
+        }
+        DB::beginTransaction();
+        array_walk($phones, function ($row, $cid) use ($redisExpireTime) {
+            $redisSet = 'remind:couponcard:' . date('Ymd') . ':' . $cid;
+            array_map(function ($v) use ($redisSet) {
+                $this->redis->sAdd($redisSet, $v);
+            }, $row);
+
+
+            $this->redis->expireAt($redisSet, $redisExpireTime);
+            $result = DB::table('coupon_card')->whereRaw("DATEDIFF(FROM_UNIXTIME(expire_time,'%Y-%m-%d %H:%I:%S'),NOW()) IN(30,15,7,3,1)")->whereIn('phone', $row)->update(['remind_at' => date('Y-m-d')]);
 
             if (!$result) {
+                array_map(function ($v) use ($redisSet) {
+                    $this->redis->sRem($redisSet, $v);
+                }, $row);
                 Log::info('update coupon_card remind_at sql: ' . json_encode(DB::getQueryLog(), JSON_UNESCAPED_UNICODE));
                 Log::info('update coupon_card remind_at fail');
                 DB::rollBack();
                 exit();
             }
         });
-        if (empty($this->jobData)) {
-            return false;
-        }
-
         $result = DB::table('remind_job')->insert($this->jobData);
         if (!$result) {
+            array_walk($phones, function ($row, $cid) {
+                $redisSet = 'remind:couponcard:' . date('Ymd') . ':' . $cid;
+                array_map(function ($v) use ($redisSet) {
+                    $this->redis->sRem($redisSet, $v);
+                }, $row);
+            });
             Log::info('create job fail');
             DB::rollBack();
             return false;

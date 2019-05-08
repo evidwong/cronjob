@@ -65,14 +65,13 @@ class ServiceItem extends Remind
                 Log::info('不符合推送设置要求: ' . $row['cid']);
                 exit;
             }
+            $company = $this->confRedis->hGetAll('company:' . $row['cid']);
+            if (!$company) return false;
+            $customer = $row['CustomerName'] ?: '客户';
 
-            $title = '';
-            $title .= '尊敬的' . $row['CustomerName'] . '客户，您的';
-            $title .= '车辆 ' . $row['RegisterNo'];
-            $title .= ' 服务项目';
             $type = '服务项目';
             $expireDate = date('Y-m-d', strtotime($row['BookingDate']));
-            $title .= '马上到期了';
+
             $pushType = explode(',', $cron['push_type']);
             $user = DB::table('member_openid')->where(['cid' => $row['cid'], 'phone' => $row['HandPhone']])->first();
             $tpl = $this->confRedis->hGet('wechat_template:' . $row['cid'], 'service_expire_notice');
@@ -81,16 +80,26 @@ class ServiceItem extends Remind
             }
             if ((!$pushType || in_array('wechat', $pushType)) && $user && $tpl) { //
                 // 默认微信推送，或设置了有微信推送
-                
+                $title = '';
+                $title .= '尊敬的' . $customer . '客户，您的';
+                $title .= '车辆有服务项目';
+                $title .= "即将到期\n";
+                $title .= $row['RegisterNo'] ? '车牌号码：' . $row['RegisterNo'] : '';
+                $remark = '';
+                if ($store) {
+                    if ($store->tel) $remark .= '如有问题请联系：' . $store->tel;
+                } else {
+                    if ($company['tel']) $remark .= '如有问题请联系：' . $company['tel'];
+                }
                 $msg = [
                     'touser' => $user->openid,
                     'template_id' => $tpl,
-                    'url' => '',
+                    'url' => config('app.url') . '/User/Notifycenter/index/amcc/' . $row['cid'],
                     'data' => array(
                         'first' => array('value' => $title, 'color' => ''),
-                        'keyword1' => array('value' => $row['BusinessType'], 'color' => ''),
+                        'keyword1' => array('value' => $row['JobName'], 'color' => ''),
                         'keyword2' => array('value' => $expireDate, 'color' => '',),
-                        'remark' => array('value' => '', 'color' => '')
+                        'remark' => array('value' => $remark, 'color' => '')
                     )
                 ];
                 $this->jobData[] = [
@@ -101,6 +110,7 @@ class ServiceItem extends Remind
                     'action' => 'push',
                     'from_id' => $row['id'],
                     'phone' => $row['HandPhone'],
+                    'limit_at'=>$row['BookingDate'],
                     'function_code' => '',
                     'relation_code' => '',
                     'job' => json_encode($msg, JSON_UNESCAPED_UNICODE),
@@ -116,12 +126,14 @@ class ServiceItem extends Remind
                 $data = [];
                 $customer = '尊敬的';
                 $customer .= $row['CustomerName'] ?: '客户';
-                $smsContent = $customer . '，您的车辆：' . $row['RegisterNo'] . ' ' . $type . '将于' . $expireDate . '到期';
+                $smsContent = $customer . '，您的：' . $row['RegisterNo'] . ' ' . $row['JobName'] . ' ' . $expireDate . '到期';
 
                 if ($store) {
                     $data['store_id'] = $store->id;
                     $data['store_name'] = $store->branch;
-                    if ($store->tel) $smsContent .= '，如需办理请联系：' . $store->tel;
+                    if ($store->tel) $smsContent .= '，请联系：' . $store->tel;
+                } else {
+                    if ($company['tel']) $smsContent .= '，请联系：' . $company['tel'];
                 }
 
                 // 短信签名
@@ -155,6 +167,8 @@ class ServiceItem extends Remind
                     'action' => 'push',
                     'from_id' => $row['id'],
                     'flag_num' => $data['sms_num'],
+                    'flag_time' => $time,
+                    'limit_at'=>$row['BookingDate'],
                     'phone' => $row['HandPhone'],
                     'function_code' => '',
                     'relation_code' => '',
