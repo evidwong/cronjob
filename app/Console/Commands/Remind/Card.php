@@ -54,8 +54,8 @@ class Card extends Remind
         array_walk($rows, function ($row, $index) use (&$phones) {
             $row = get_object_vars($row);
             $redisSet = 'remind:couponcard:' . date('Ymd') . ':' . $row['cid'];
-            $isMember=$this->redis->sIsMember($redisSet,$row['phone']);
-            if($isMember) return false;
+            $isMember = $this->redis->sIsMember($redisSet, $row['phone']);
+            if ($isMember) return false;
             $cron = $this->cronConf($row['cid'], 'jobExpire');
             // 获取推送时间类型
             $days = $row['expire_day'];
@@ -100,7 +100,8 @@ class Card extends Remind
                         'remark' => array('value' => "\n感谢选择我们的服务！\n" . $storeInfo, 'color' => '')
                     )
                 );
-
+                $msg = json_encode($msg, JSON_UNESCAPED_UNICODE);
+                $index = "wechat:" . md5($msg . microtime(true));
                 $this->jobData[] = [
                     'cid' => $row['cid'],
                     'comno' => 'A00',
@@ -112,15 +113,27 @@ class Card extends Remind
                     'limit_at' => $row['expired'],
                     'function_code' => '',
                     'relation_code' => '',
-                    'job' => json_encode($msg, JSON_UNESCAPED_UNICODE),
+                    'redis_key_index' => $index,
+                    'job' => $msg,
                     'fail_content' => '',
                     'create_at' => Carbon::now()->format('Y-m-d H:i:s'),
                 ];
+                $redisIndexContent = [
+                    'cid' => $row['cid'],
+                    'comno' => 'A00',
+                    'type' => 'wechat',
+                    'phone' => $row['phone'],
+                    'job' => $msg
+                ];
+
+                $this->redisIndex[] = $index;
+                $this->redisContent[$index] = json_encode($redisIndexContent, JSON_UNESCAPED_UNICODE);
             }
         });
         if (empty($this->jobData)) {
             return false;
         }
+
         DB::beginTransaction();
         array_walk($phones, function ($row, $cid) use ($redisExpireTime) {
             $redisSet = 'remind:couponcard:' . date('Ymd') . ':' . $cid;
@@ -153,6 +166,21 @@ class Card extends Remind
             Log::info('create job fail');
             DB::rollBack();
             return false;
+        }
+        if ($this->wechatIndex) {
+            array_unshift($this->wechatIndex, 'wechat:message:template');
+            call_user_func_array([$this->redis, 'lPush'], $this->wechatIndex);
+            $result = $this->redis->mSet($this->wechatList);
+            if (!$result) {
+                DB::rollBack();
+                array_walk($phones, function ($row, $cid) {
+                    $redisSet = 'remind:couponcard:' . date('Ymd') . ':' . $cid;
+                    array_map(function ($v) use ($redisSet) {
+                        $this->redis->sRem($redisSet, $v);
+                    }, $row);
+                });
+                return false;
+            }
         }
         DB::commit();
         Log::info('remind coupon card end success');

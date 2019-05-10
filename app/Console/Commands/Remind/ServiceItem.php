@@ -102,6 +102,8 @@ class ServiceItem extends Remind
                         'remark' => array('value' => $remark, 'color' => '')
                     )
                 ];
+                $msg = json_encode($msg, JSON_UNESCAPED_UNICODE);
+                $index = "wechat:" . $row['cid'] . ":" . md5($msg . microtime(true));
                 $this->jobData[] = [
                     'cid' => $row['cid'],
                     'comno' => $row['ComNo'] ?: 'A00',
@@ -110,15 +112,26 @@ class ServiceItem extends Remind
                     'action' => 'push',
                     'from_id' => $row['id'],
                     'phone' => $row['HandPhone'],
-                    'limit_at'=>$row['BookingDate'],
+                    'limit_at' => $row['BookingDate'],
                     'function_code' => '',
                     'relation_code' => '',
-                    'job' => json_encode($msg, JSON_UNESCAPED_UNICODE),
+                    'redis_key_index' => $index,
+                    'job' => $msg,
                     'fail_content' => '',
                     'create_at' => Carbon::now()->format('Y-m-d H:i:s'),
                     'status' => 0,
                     'opt_uid' => 0,
                 ];
+                $redisIndexContent = [
+                    'cid' => $row['cid'],
+                    'type' => 'wechat',
+                    'comno' => $row['ComNo'] ?: 'A00',
+                    'phone' => $row['HandPhone'],
+                    'job' => $msg,
+                ];
+
+                $this->wechatIndex[] = $index;
+                $this->wechatList[$index] = json_encode($redisIndexContent, JSON_UNESCAPED_UNICODE);
             }
             $_conf = $this->confRedis->hGetAll('wechat_config:' . $row['cid']);
             if (in_array('sms', $pushType) && $row['HandPhone'] &&  $_conf && $_conf['sms_account'] && $_conf['sms_passcode'] && $_conf['sms_ip']) {
@@ -159,6 +172,8 @@ class ServiceItem extends Remind
                 $data['cid'] = $row['cid'];
                 $data['addtime'] = $time;
                 $this->smsRecords[] = $data;
+
+                $index = "sms:" . $row['cid'] . ":" . md5($sendInfo . microtime(true));
                 $this->jobData[] = [
                     'cid' => $row['cid'],
                     'comno' => $row['ComNo'] ?: 'A00',
@@ -168,16 +183,27 @@ class ServiceItem extends Remind
                     'from_id' => $row['id'],
                     'flag_num' => $data['sms_num'],
                     'flag_time' => $time,
-                    'limit_at'=>$row['BookingDate'],
+                    'limit_at' => $row['BookingDate'],
                     'phone' => $row['HandPhone'],
                     'function_code' => '',
                     'relation_code' => '',
-                    'job' => json_encode($sendInfo, JSON_UNESCAPED_UNICODE),
+                    'redis_key_index' => $index,
+                    'job' => $sendInfo,
                     'fail_content' => '',
                     'create_at' => Carbon::now()->format('Y-m-d H:i:s'),
                     'status' => 0,
                     'opt_uid' => 0,
                 ];
+                $redisIndexContent = [
+                    'cid' => $row['cid'],
+                    'type' => 'sms',
+                    'comno' => $row['ComNo'] ?: 'A00',
+                    'phone' => $row['HandPhone'],
+                    'job' => $sendInfo,
+                ];
+
+                $this->smsIndex[] = $index;
+                $this->smsList[$index] = json_encode($redisIndexContent, JSON_UNESCAPED_UNICODE);
             }
         });
         if (empty($this->jobData)) {
@@ -202,6 +228,21 @@ class ServiceItem extends Remind
             Log::info('insert sms record: ' . $result);
             if (!$result) {
                 Log::info('insert sms record fail');
+                DB::rollBack();
+                return false;
+            }
+        }
+        if ($this->wechatIndex) {
+            array_unshift($this->wechatIndex, 'wechat:message:template');
+            call_user_func_array([$this->redis, 'lPush'], $this->wechatIndex);
+        }
+        if ($this->smsIndex) {
+            array_unshift($this->smsIndex, 'sms:message');
+            call_user_func_array([$this->redis, 'lPush'], $this->smsIndex);
+        }
+        if ($this->wechatIndex || $this->smsIndex) {
+            $result = $this->redis->mSet(array_merge($this->wechatList, $this->smsList));
+            if (!$result) {
                 DB::rollBack();
                 return false;
             }

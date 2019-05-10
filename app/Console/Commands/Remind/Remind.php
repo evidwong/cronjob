@@ -32,6 +32,11 @@ class Remind extends Command
     protected $wechatTemplateMsg = [];
     protected $smsRecords = [];
     protected $smsToSends = [];
+    protected $wechatIndex=[];
+    protected $wechatList=[];
+    protected $smsList=[];
+    protected $smsIndex=[];
+
 
     public function __construct()
     {
@@ -157,5 +162,6 @@ class Remind extends Command
             // 获取不到“证件提醒”的推送设置；开始、结束时间不符合设置要求；已禁用；日期时间不符合推送设置要求；当前不符合推送时间设置要求
             return false;
         }
+        return true;
     }
 }

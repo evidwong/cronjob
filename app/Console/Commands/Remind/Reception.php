@@ -96,6 +96,9 @@ class Reception extends Remind
                         'remark' => array('value' => $remark, 'color' => '')
                     )
                 ];
+                $msg = json_encode($msg, JSON_UNESCAPED_UNICODE);
+                $index = "wechat:" . $row['cid'] . ":" . md5($msg . microtime(true));
+
                 $this->jobData[] = [
                     'cid' => $row['cid'],
                     'comno' => $reception->COMNo,
@@ -107,12 +110,23 @@ class Reception extends Remind
                     'limit_at' => $row['returnPlanDate'],
                     'function_code' => $reception->FunctionCode,
                     'relation_code' => $reception->CReceptionCode,
-                    'job' => json_encode($msg, JSON_UNESCAPED_UNICODE),
+                    'redis_key_index' => $index,
+                    'job' => $msg,
                     'fail_content' => '',
                     'create_at' => Carbon::now()->format('Y-m-d H:i:s'),
                     'status' => 0,
                     'opt_uid' => 0,
                 ];
+                $redisIndexContent = [
+                    'cid' => $row['cid'],
+                    'type' => 'wechat',
+                    'comno' => $row['COMNo'] ?: 'A00',
+                    'phone' => $row['HandPhone'],
+                    'job' => $msg,
+                ];
+
+                $this->wechatIndex[] = $index;
+                $this->wechatList[$index] = json_encode($redisIndexContent, JSON_UNESCAPED_UNICODE);
             }
         });
         if (empty($this->jobData)) {
@@ -140,6 +154,19 @@ class Reception extends Remind
             Log::info('update return_vist_plan planvisitdate fail');
             DB::rollBack();
             return false;
+        }
+
+        if ($this->wechatIndex) {
+            array_unshift($this->wechatIndex, 'wechat:message:template');
+            call_user_func_array([$this->redis, 'lPush'], $this->wechatIndex);
+            $result = $this->redis->mSet($this->wechatList);
+            if (!$result) {
+                DB::rollBack();
+                array_map(function ($v) use ($receptionIdRedis) {
+                    $this->redis->sRem($receptionIdRedis, $v);
+                }, $actionId);
+                return false;
+            }
         }
         $this->redis->expireAt($receptionIdRedis, $redisExpireTime);
         Log::info('execute sql: ' . json_encode(DB::getQueryLog(), JSON_UNESCAPED_UNICODE));

@@ -96,6 +96,8 @@ class Package extends Remind
                         'remark' => array('value' => "\n感谢选择我们的服务！\n" . $storeInfo, 'color' => '')
                     )
                 ];
+                $msg = json_encode($msg, JSON_UNESCAPED_UNICODE);
+                $index = "wechat:" . $row['cid'] . ":" . md5($msg . microtime(true));
                 $this->jobData[] = [
                     'cid' => $row['cid'],
                     'comno' => $row['COMNo'],
@@ -107,12 +109,23 @@ class Package extends Remind
                     'limit_at' => $row['LimitDate'],
                     'function_code' => '',
                     'relation_code' => '',
-                    'job' => json_encode($msg, JSON_UNESCAPED_UNICODE),
+                    'redis_key_index' => $index,
+                    'job' => $msg,
                     'fail_content' => '',
                     'create_at' => Carbon::now()->format('Y-m-d H:i:s'),
                     'status' => 0,
                     'opt_uid' => 0,
                 ];
+                $redisIndexContent = [
+                    'cid' => $row['cid'],
+                    'type' => 'wechat',
+                    'comno' => $row['COMNo'] ?: 'A00',
+                    'phone' => $row['HandPhone'],
+                    'job' => $msg,
+                ];
+
+                $this->wechatIndex[] = $index;
+                $this->wechatList[$index] = json_encode($redisIndexContent, JSON_UNESCAPED_UNICODE);
             }
             $time = time();
             $_conf = $this->confRedis->hGetAll('wechat_config:' . $row['cid']);
@@ -150,6 +163,8 @@ class Package extends Remind
                 $data['cid'] = $row['cid'];
                 $data['addtime'] = $time;
                 $this->smsRecords[] = $data;
+
+                $index = "sms:" . $row['cid'] . ":" . md5($sendInfo . microtime(true));
                 $this->jobData[] = [
                     'cid' => $row['cid'],
                     'comno' => $row['COMNo'] ?: 'A00',
@@ -162,12 +177,23 @@ class Package extends Remind
                     'limit_at' => $row['LimitDate'],
                     'function_code' => '',
                     'relation_code' => '',
-                    'job' => json_encode($sendInfo, JSON_UNESCAPED_UNICODE),
+                    'redis_key_index' => $index,
+                    'job' => $sendInfo,
                     'fail_content' => '',
                     'create_at' => Carbon::now()->format('Y-m-d H:i:s'),
                     'status' => 0,
                     'opt_uid' => 0,
                 ];
+                $redisIndexContent = [
+                    'cid' => $row['cid'],
+                    'type' => 'sms',
+                    'comno' => $row['ComNo'] ?: 'A00',
+                    'phone' => $row['HandPhone'],
+                    'job' => $sendInfo,
+                ];
+
+                $this->smsIndex[] = $index;
+                $this->smsList[$index] = json_encode($redisIndexContent, JSON_UNESCAPED_UNICODE);
             }
         });
         if (empty($this->jobData)) {
@@ -180,6 +206,7 @@ class Package extends Remind
             }, $row);
             $this->redis->expireAt($redisSet, $redisExpireTime);
         });
+        DB::beginTransaction();
         $result = DB::table('remind_job')->insert($this->jobData);
         if (!$result) {
             array_walk($MemberSetCode, function ($row, $cid) {
@@ -192,6 +219,28 @@ class Package extends Remind
             DB::rollBack();
             return false;
         }
+        if ($this->wechatIndex) {
+            array_unshift($this->wechatIndex, 'wechat:message:template');
+            call_user_func_array([$this->redis, 'lPush'], $this->wechatIndex);
+        }
+        if ($this->smsIndex) {
+            array_unshift($this->smsIndex, 'sms:message');
+            call_user_func_array([$this->redis, 'lPush'], $this->smsIndex);
+        }
+        if ($this->wechatIndex || $this->smsIndex) {
+            $result = $this->redis->mSet(array_merge($this->wechatList, $this->smsList));
+            if (!$result) {
+                array_walk($MemberSetCode, function ($row, $cid) {
+                    $redisSet = 'remind:membersetsalescode:' . date('Ymd') . ':' . $cid;
+                    array_map(function ($v) use ($redisSet) {
+                        $this->redis->sRem($redisSet, $v);
+                    }, $row);
+                });
+                DB::rollBack();
+                return false;
+            }
+        }
+        DB::commit();
         Log::info('execute sql: ' . json_encode(DB::getQueryLog(), JSON_UNESCAPED_UNICODE));
         Log::info('End success');
     }
