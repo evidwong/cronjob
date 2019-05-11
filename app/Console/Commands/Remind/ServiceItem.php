@@ -63,7 +63,7 @@ class ServiceItem extends Remind
             $check = $this->checkCondition($cron, $days);
             if (!$check) {
                 Log::info('不符合推送设置要求: ' . $row['cid']);
-                exit;
+                return false;
             }
             $company = $this->confRedis->hGetAll('company:' . $row['cid']);
             if (!$company) return false;
@@ -111,16 +111,14 @@ class ServiceItem extends Remind
                     'type' => 'wechat',
                     'action' => 'push',
                     'from_id' => $row['id'],
-                    'phone' => $row['HandPhone'],
+                    'flag_num' => 0,
+                    'flag_time' => $time,
                     'limit_at' => $row['BookingDate'],
-                    'function_code' => '',
-                    'relation_code' => '',
+                    'phone' => $row['HandPhone'],
+                    'relation_code' => $row['AwokeListCode'],
                     'redis_key_index' => $index,
                     'job' => $msg,
-                    'fail_content' => '',
                     'create_at' => Carbon::now()->format('Y-m-d H:i:s'),
-                    'status' => 0,
-                    'opt_uid' => 0,
                 ];
                 $redisIndexContent = [
                     'cid' => $row['cid'],
@@ -159,6 +157,7 @@ class ServiceItem extends Remind
                 }
                 $sendInfo = (mktime(true) * 1000) . '|' . (empty($_conf['sms_subaccount']) ? '*' : $_conf['sms_subaccount']) . '|' . $row['HandPhone'] . '|' . base64_encode(iconv('UTF-8', 'GBK//IGNORE', $smsContent));
                 $temps[$row['cid']][] = $sendInfo;
+                $index = "sms:" . $row['cid'] . ":" . md5($sendInfo . microtime(true));
 
                 $data['sms_num'] = ceil(mb_strlen($smsContent, 'UTF-8') / 60);
                 # 发送短信
@@ -170,10 +169,11 @@ class ServiceItem extends Remind
                 $data['content'] = $smsContent;
                 $data['phone'] = $row['HandPhone'];
                 $data['cid'] = $row['cid'];
+                $data['flag_content']=$index;
                 $data['addtime'] = $time;
                 $this->smsRecords[] = $data;
 
-                $index = "sms:" . $row['cid'] . ":" . md5($sendInfo . microtime(true));
+                
                 $this->jobData[] = [
                     'cid' => $row['cid'],
                     'comno' => $row['ComNo'] ?: 'A00',
@@ -185,14 +185,10 @@ class ServiceItem extends Remind
                     'flag_time' => $time,
                     'limit_at' => $row['BookingDate'],
                     'phone' => $row['HandPhone'],
-                    'function_code' => '',
-                    'relation_code' => '',
+                    'relation_code' => $row['AwokeListCode'],
                     'redis_key_index' => $index,
                     'job' => $sendInfo,
-                    'fail_content' => '',
                     'create_at' => Carbon::now()->format('Y-m-d H:i:s'),
-                    'status' => 0,
-                    'opt_uid' => 0,
                 ];
                 $redisIndexContent = [
                     'cid' => $row['cid'],

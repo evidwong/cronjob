@@ -158,9 +158,9 @@ class Remind extends Command
         // dd(isset($cron['expire_step']));
         $step=[];
         $step = isset($cron['expire_step'])?explode(',', $cron['expire_step']):[];
-        if (!$cron || ($cron['start_time'] && strtotime($cron['start_time']) > time()) || ($cron['end_time'] && strtotime($cron['end_time']) < time()) || $cron['status'] <= 0 || ($step && !in_array($day, $step)) || ($cron['start_at'] && date('H:i:s') < $cron['start_at']) || ($cron['end_at'] && date('H:i:s') > $cron['end_at'])) {
+        if (!$cron || $cron['status']<=0 || ($cron['start_time'] && $cron['start_time']!='0000-00-00' && strtotime($cron['start_time']) > time()) || ($cron['end_time'] && $cron['end_time']!='0000-00-00' && strtotime($cron['end_time']) < time()) || $cron['status'] <= 0 || ($step && !in_array($day, $step)) || ($cron['start_at'] && date('H:i:s') < $cron['start_at']) || ($cron['end_at'] && date('H:i:s') > $cron['end_at'])) {
             // 获取不到“证件提醒”的推送设置；开始、结束时间不符合设置要求；已禁用；日期时间不符合推送设置要求；当前不符合推送时间设置要求
-            return false;
+            // return false;
         }
         return true;
     }

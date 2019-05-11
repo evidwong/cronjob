@@ -62,7 +62,7 @@ class Card extends Remind
             $check = $this->checkCondition($cron, $days);
             if (!$check) {
                 Log::info('不符合推送设置要求: ' . $row['cid']);
-                exit;
+                return false;
             }
 
             $company = $this->confRedis->hGetAll('company:' . $row['cid']);

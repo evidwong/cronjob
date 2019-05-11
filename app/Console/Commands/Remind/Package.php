@@ -61,7 +61,7 @@ class Package extends Remind
             $check = $this->checkCondition($cron, $days);
             if (!$check) {
                 Log::info('不符合推送设置要求: ' . $row['cid']);
-                exit;
+                return false;
             }
             $company = $this->confRedis->hGetAll('company:' . $row['cid']);
             if (!$company) return false;
@@ -150,7 +150,7 @@ class Package extends Remind
                 }
                 $sendInfo = (mktime(true) * 1000) . '|' . (empty($_conf['sms_subaccount']) ? '*' : $_conf['sms_subaccount']) . '|' . $row['HandPhone'] . '|' . base64_encode(iconv('UTF-8', 'GBK//IGNORE', $smsContent));
                 $temps[$row['cid']][] = $sendInfo;
-
+                $index = "sms:" . $row['cid'] . ":" . md5($sendInfo . microtime(true));
                 $data['sms_num'] = ceil(mb_strlen($smsContent, 'UTF-8') / 60);
                 # 发送短信
                 $data['registerNo'] = $row['RegisterNo'];
@@ -159,12 +159,13 @@ class Package extends Remind
                 $data['pid'] = 0;
                 $data['type'] = $type;
                 $data['content'] = $smsContent;
+                $data['flag_content'] = $index;
                 $data['phone'] = $row['HandPhone'];
                 $data['cid'] = $row['cid'];
                 $data['addtime'] = $time;
                 $this->smsRecords[] = $data;
 
-                $index = "sms:" . $row['cid'] . ":" . md5($sendInfo . microtime(true));
+
                 $this->jobData[] = [
                     'cid' => $row['cid'],
                     'comno' => $row['COMNo'] ?: 'A00',
@@ -207,6 +208,20 @@ class Package extends Remind
             $this->redis->expireAt($redisSet, $redisExpireTime);
         });
         DB::beginTransaction();
+        if ($this->smsRecords) {
+            $result = DB::table('r_smsrecord')->insert($this->smsRecords);
+            if (!$result) {
+                array_walk($MemberSetCode, function ($row, $cid) {
+                    $redisSet = 'remind:membersetsalescode:' . date('Ymd') . ':' . $cid;
+                    array_map(function ($v) use ($redisSet) {
+                        $this->redis->sRem($redisSet, $v);
+                    }, $row);
+                });
+                Log::info('create job fail');
+                DB::rollBack();
+                return false;
+            }
+        }
         $result = DB::table('remind_job')->insert($this->jobData);
         if (!$result) {
             array_walk($MemberSetCode, function ($row, $cid) {

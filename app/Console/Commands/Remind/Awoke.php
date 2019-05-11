@@ -49,15 +49,30 @@ class Awoke extends Remind
     {
         if (!$this->redis || !$this->confRedis) return false;
         DB::enableQueryLog();
-        $rows = AwokeModel::whereRaw("DATEDIFF(BookingDate,NOW()) IN(90,60,30,15,7,3,1)")->whereRaw("DATEDIFF(IFNULL(PlanVisitDate,'1970-01-01 00:00:00'),NOW())!=0")->whereIn('BusinessType', ['年审', '保险', '证件'])->get()->toArray();
+        $this->redis->select(10);
+        $redisMembers = "remind:credentials:expire:" . date('Ymd');
+        $vehicles = $this->redis->sMembers($redisMembers);
+        if ($vehicles) {
+            $rows = AwokeModel::whereRaw("DATEDIFF(BookingDate,NOW()) IN(30,15,7,3,1)")->whereIn('BusinessType', ['年审', '保险', '证件'])->whereNotIn('RegisterNo', $vehicles)->get()->toArray();
+        } else {
+            $rows = DB::select("SELECT * FROM `c_awoke` WHERE id IN(SELECT MAX(id) AS id FROM `c_awoke` WHERE DATEDIFF(BookingDate,NOW()) IN(30,15,7,3,1) AND BusinessType IN('年审', '保险', '证件') GROUP BY cid,RegisterNo,BusinessType)");
+        }
+
+        // $rows = AwokeModel::whereRaw("DATEDIFF(BookingDate,NOW()) IN(30,15,7,3,1)")->whereIn('BusinessType', ['年审', '保险', '证件'])->orderBy('id','DESC')->get()->toArray();
+        // dd($rows);
         Log::info('sql: ' . json_encode(DB::getQueryLog(), JSON_UNESCAPED_UNICODE));
         Log::info('data：' . json_encode($rows, JSON_UNESCAPED_UNICODE));
         if (!$rows) return false;
 
         $time = time();
         $temps = [];
-        $actionId=[];
-        array_walk($rows, function ($row, $index) use ($time, &$temps,&$actionId) {
+        $actionId = [];
+        $vehicles = [];
+        array_walk($rows, function ($row, $index) use ($time, &$temps, &$actionId, &$vehicles, $redisMembers) {
+            // $row = get_object_vars($row);
+
+            $isMember = $this->redis->sIsMember($redisMembers, $row['id']);
+            if ($isMember) return false;
             // 获取定时任务配置
             $cron = $this->cronConf($row['cid'], 'credentialsExpire');
             // 获取推送时间类型
@@ -65,7 +80,7 @@ class Awoke extends Remind
             $check = $this->checkCondition($cron, $days);
             if (!$check) {
                 Log::info('不符合推送设置要求: ' . $row['cid']);
-                exit;
+                return false;
             }
             $company = $this->confRedis->hGetAll('company:' . $row['cid']);
             if (!$company) return false;
@@ -76,13 +91,15 @@ class Awoke extends Remind
             $customer = $row['CustomerName'] ?: '客户';
             $type = $row['BusinessType'];
             if (!$type) return false;
-            $actionId[]=$row['id'];
+            $actionId[$row['cid']][] = $row['id'];
+
+            $vehicles[$row['cid']][] = $row['id'];
             $expireDate = date('Y-m-d', strtotime($row['BookingDate']));
 
             $pushType = explode(',', $cron['push_type']);
             $user = DB::table('member_openid')->where(['cid' => $row['cid'], 'phone' => $row['HandPhone']])->first();
             $tpl = $this->confRedis->hGet('wechat_template:' . $row['cid'], 'credentials_notice');
-            if (true) { //(!$pushType || in_array('wechat', $pushType)) && $user && $tpl
+            if ((!$pushType || in_array('wechat', $pushType)) && $user && $tpl) { //
                 // 默认微信推送，或设置了有微信推送
                 $title = '';
                 $title .= '尊敬的' . $customer . '，您的车辆 ' . $row['RegisterNo'] . ' ' . $type;
@@ -114,15 +131,13 @@ class Awoke extends Remind
                     'action' => 'push',
                     'from_id' => $row['id'],
                     'phone' => $row['HandPhone'],
+                    'flag_num' => 0,
+                    'flag_time' => $time,
                     'limit_at' => $row['BookingDate'],
-                    'function_code' => '',
-                    'relation_code' => '',
+                    'relation_code' => $row['AwokeListCode'],
                     'redis_key_index' => $index,
                     'job' => $msg,
-                    'fail_content' => '',
                     'create_at' => Carbon::now()->format('Y-m-d H:i:s'),
-                    'status' => 0,
-                    'opt_uid' => 0,
                 ];
                 $redisIndexContent = [
                     'cid' => $row['cid'],
@@ -159,6 +174,7 @@ class Awoke extends Remind
                 $sendInfo = (mktime(true) * 1000) . '|' . (empty($_conf['sms_subaccount']) ? '*' : $_conf['sms_subaccount']) . '|' . $row['HandPhone'] . '|' . base64_encode(iconv('UTF-8', 'GBK//IGNORE', $smsContent));
 
                 $temps[$row['cid']][] = $sendInfo;
+                $index = "sms:" . $row['cid'] . ":" . md5($sendInfo . microtime(true));
 
                 $data['sms_num'] = ceil(mb_strlen($smsContent, 'UTF-8') / 60);
                 # 发送短信
@@ -170,9 +186,10 @@ class Awoke extends Remind
                 $data['content'] = $smsContent;
                 $data['phone'] = $row['HandPhone'];
                 $data['cid'] = $row['cid'];
+                $data['flag_content'] = $index;
                 $data['addtime'] = $time;
                 $this->smsRecords[] = $data;
-                $index = "sms:" . $row['cid'] . ":" . md5($sendInfo . microtime(true));
+
                 $this->jobData[] = [
                     'cid' => $row['cid'],
                     'comno' => $row['ComNo'] ?: 'A00',
@@ -184,14 +201,10 @@ class Awoke extends Remind
                     'flag_num' => $data['sms_num'],
                     'flag_time' => $time,
                     'limit_at' => $row['BookingDate'],
-                    'function_code' => '',
-                    'relation_code' => '',
+                    'relation_code' => $row['AwokeListCode'],
                     'redis_key_index' => $index,
                     'job' => $sendInfo,
-                    'fail_content' => '',
                     'create_at' => Carbon::now()->format('Y-m-d H:i:s'),
-                    'status' => 0,
-                    'opt_uid' => 0,
                 ];
                 $redisIndexContent = [
                     'cid' => $row['cid'],
@@ -207,24 +220,32 @@ class Awoke extends Remind
         if (empty($this->jobData)) {
             return false;
         }
-
-
-
-
+        array_map(function ($v) use ($redisMembers) {
+            $this->redis->sAdd($redisMembers, $v);
+        }, $actionId);
+        $redisExpireTime = strtotime(date("Y-m-d", strtotime("+1 day")));
+        $this->redis->expireAt($redisMembers, $redisExpireTime);
 
         DB::beginTransaction();
         $result = DB::table('remind_job')->insert($this->jobData);
         if (!$result) {
             Log::info('create job fail');
             DB::rollBack();
+            array_map(function ($v) use ($redisMembers) {
+                $this->redis->sRem($redisMembers, $v);
+            }, $actionId);
             return false;
         }
         $result = DB::table('c_awoke')->whereIn('id', $actionId)->update(['PlanVisitDate' => date('Y-m-d')]);
         if (!$result) {
             Log::info('update c_awoke planvisitdate fail');
             DB::rollBack();
-            return false;
+            array_map(function ($v) use ($redisMembers) {
+                $this->redis->sRem($redisMembers, $v);
+            }, $actionId);
+            exit();
         }
+
         Log::info('execute sql: ' . json_encode(DB::getQueryLog(), JSON_UNESCAPED_UNICODE));
         if ($this->smsRecords) {
             $result = DB::table('r_smsrecord')->insert($this->smsRecords);
@@ -232,6 +253,9 @@ class Awoke extends Remind
             if (!$result) {
                 Log::info('insert sms record fail');
                 DB::rollBack();
+                array_map(function ($v) use ($redisMembers) {
+                    $this->redis->sRem($redisMembers, $v);
+                }, $actionId);
                 return false;
             }
         }
@@ -248,6 +272,9 @@ class Awoke extends Remind
             $result = $this->redis->mSet(array_merge($this->wechatList, $this->smsList));
             if (!$result) {
                 DB::rollBack();
+                array_map(function ($v) use ($redisMembers) {
+                    $this->redis->sRem($redisMembers, $v);
+                }, $actionId);
                 return false;
             }
         }
