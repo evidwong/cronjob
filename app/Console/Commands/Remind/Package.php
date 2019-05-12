@@ -50,7 +50,6 @@ class Package extends Remind
         array_walk($rows, function ($row, $index) use (&$MemberSetCode) {
             $row = get_object_vars($row);
             $redisSet = 'remind:membersetsalescode:' . date('Ymd') . ':' . $row['cid'];
-            $this->redis->sIsMember($redisSet, $row['MemberSetCode']);
             $isMember = $this->redis->sIsMember($redisSet, $row['MemberSetCode']);
             if ($isMember) return false;
             // 获取定时任务配置

@@ -43,10 +43,10 @@ class Reception extends Remind
         if (!$this->redis || !$this->confRedis) return false;
         // Log::useDailyFiles(storage_path('logs/job/expire_awoke.log'));
         DB::enableQueryLog();
-        $receptionIdRedis = 'return:visit:id:' . date('Ymd');
+        $receptionIdRedis = 'return:visit:' . date('Ymd');
         $ids = $this->redis->sMembers($receptionIdRedis);
         if ($ids) {
-            $rows = DB::table('return_vist_plan')->whereRaw("DATEDIFF(returnPlanDate,NOW()) IN(30,15,7,3,1)")->whereNotIn('Vehicleid', $ids)->get()->toArray();
+            $rows = DB::table('return_vist_plan')->whereRaw("DATEDIFF(returnPlanDate,NOW()) IN(30,15,7,3,1)")->whereNotIn('id', $ids)->get()->toArray();
         } else {
             $rows = DB::table('return_vist_plan')->whereRaw("DATEDIFF(returnPlanDate,NOW()) IN(30,15,7,3,1)")->get()->toArray();
         }
@@ -57,6 +57,8 @@ class Reception extends Remind
         $redisExpireTime = strtotime(date("Y-m-d", strtotime("+1 day")));
         array_walk($rows, function ($row, $index) use ($receptionIdRedis, &$actionId) {
             $row = get_object_vars($row);
+            $checkRedisMember = $this->redis->sIsMember($receptionIdRedis, $row['id']);
+            if ($checkRedisMember) return false;
             // 获取定时任务配置
             $cron = $this->cronConf($row['cid'], 'needVisit');
             // 获取推送时间类型
@@ -69,9 +71,6 @@ class Reception extends Remind
             $customer = $row['CustomerName'] ?: '客户';
             $reception = DB::table('c_receptionm')->where('id', $row['worker_id'])->first();
             if (!$reception) return false;
-
-            $checkRedisMember = $this->redis->sIsMember($receptionIdRedis, $row['id']);
-            if ($checkRedisMember) return false;
 
             $actionId[] = $row['id'];
             $title = "服务回访\n";
