@@ -51,17 +51,15 @@ class Awoke extends Remind
         DB::enableQueryLog();
         $this->redis->select(10);
         $redisMembers = "remind:credentials:expire:" . date('Ymd');
-        $vehicles = $this->redis->sMembers($redisMembers);
-        if ($vehicles) {
-            $rows = AwokeModel::whereRaw("DATEDIFF(BookingDate,NOW()) IN(30,15,7,3,1)")->whereIn('BusinessType', ['年审', '保险', '证件'])->whereNotIn('RegisterNo', $vehicles)->get()->toArray();
-        } else {
-            $rows = DB::select("SELECT * FROM `c_awoke` WHERE id IN(SELECT MAX(id) AS id FROM `c_awoke` WHERE DATEDIFF(BookingDate,NOW()) IN(30,15,7,3,1) AND BusinessType IN('年审', '保险', '证件') GROUP BY cid,RegisterNo,BusinessType)");
-        }
-
+        // $vehicles = $this->redis->sMembers($redisMembers);
+        // if ($vehicles) {
+        //     $rows = AwokeModel::whereRaw("DATEDIFF(BookingDate,NOW()) IN(30,15,7,3,1)")->whereIn('BusinessType', ['年审', '保险', '证件'])->get()->toArray();
+        // } else {
+        // }
+        $rows = DB::select("SELECT * FROM `c_awoke` WHERE id IN(SELECT MAX(id) AS id FROM `c_awoke` WHERE DATEDIFF(BookingDate,NOW()) IN(30,15,7,3,1) AND BusinessType IN('年审', '保险', '证件') GROUP BY cid,RegisterNo,BusinessType)");
         // $rows = AwokeModel::whereRaw("DATEDIFF(BookingDate,NOW()) IN(30,15,7,3,1)")->whereIn('BusinessType', ['年审', '保险', '证件'])->orderBy('id','DESC')->get()->toArray();
         // dd($rows);
         Log::info('sql: ' . json_encode(DB::getQueryLog(), JSON_UNESCAPED_UNICODE));
-        Log::info('data：' . json_encode($rows, JSON_UNESCAPED_UNICODE));
         if (!$rows) return false;
 
         $time = time();
@@ -69,8 +67,6 @@ class Awoke extends Remind
         $actionId = [];
         $vehicles = [];
         array_walk($rows, function ($row, $index) use ($time, &$temps, &$actionId, &$vehicles, $redisMembers) {
-            // $row = get_object_vars($row);
-
             $isMember = $this->redis->sIsMember($redisMembers, $row['id']);
             if ($isMember) return false;
             // 获取定时任务配置
@@ -91,9 +87,11 @@ class Awoke extends Remind
             $customer = $row['CustomerName'] ?: '客户';
             $type = $row['BusinessType'];
             if (!$type) return false;
-            $actionId[$row['cid']][] = $row['id'];
+            $actionId[] = $row['id'];
+            if (!$row['PlanVisitDate'] || $row['PlanVisitDate'] || strtotime($row['PlanVisitDate']) < $time) {
+                $vehicles[] = $row['id'];
+            }
 
-            $vehicles[$row['cid']][] = $row['id'];
             $expireDate = date('Y-m-d', strtotime($row['BookingDate']));
 
             $pushType = explode(',', $cron['push_type']);
@@ -227,6 +225,7 @@ class Awoke extends Remind
         $this->redis->expireAt($redisMembers, $redisExpireTime);
 
         DB::beginTransaction();
+        // 写入推送任务
         $result = DB::table('remind_job')->insert($this->jobData);
         if (!$result) {
             Log::info('create job fail');
@@ -236,17 +235,24 @@ class Awoke extends Remind
             }, $actionId);
             return false;
         }
-        $result = DB::table('c_awoke')->whereIn('id', $actionId)->update(['PlanVisitDate' => date('Y-m-d')]);
-        if (!$result) {
-            Log::info('update c_awoke planvisitdate fail');
-            DB::rollBack();
-            array_map(function ($v) use ($redisMembers) {
-                $this->redis->sRem($redisMembers, $v);
-            }, $actionId);
-            exit();
+        // 如果有需要更新计划回访时间的，更新
+        if (!empty($vehicles)) {
+            $result = DB::table('c_awoke')->whereIn('id', $actionId)->update(['PlanVisitDate' => date('Y-m-d')]);
+            if (!$result) {
+                Log::info('update c_awoke planvisitdate fail');
+                DB::rollBack();
+                array_map(function ($v) use ($redisMembers) {
+                    $this->redis->sRem($redisMembers, $v);
+                }, $actionId);
+                exit();
+            }
         }
 
         Log::info('execute sql: ' . json_encode(DB::getQueryLog(), JSON_UNESCAPED_UNICODE));
+
+        /** 
+         * 短信记录写入数据库 
+         */
         if ($this->smsRecords) {
             $result = DB::table('r_smsrecord')->insert($this->smsRecords);
             Log::info('insert sms record: ' . $result);
@@ -260,6 +266,10 @@ class Awoke extends Remind
             }
         }
         Log::info('execute sql: ' . json_encode(DB::getQueryLog(), JSON_UNESCAPED_UNICODE));
+
+        /** 
+         * 推送任务写入Redis 
+         */
         if ($this->wechatIndex) {
             array_unshift($this->wechatIndex, 'wechat:message:template');
             call_user_func_array([$this->redis, 'lPush'], $this->wechatIndex);

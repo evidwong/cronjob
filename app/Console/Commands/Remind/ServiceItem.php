@@ -45,17 +45,23 @@ class ServiceItem extends Remind
         if (!$this->redis || !$this->confRedis) return false;
         // Log::useDailyFiles(storage_path('logs/job/expire_awoke.log'));
         DB::enableQueryLog();
-        $rows = DB::table('c_awoke')->whereRaw("DATEDIFF(BookingDate,NOW()) IN(30,15,7,3,1)")->whereNotIn('BusinessType', ['年审', '保险', '证件'])->whereRaw("DATEDIFF(IFNULL(PlanVisitDate,'1970-01-01 00:00:00'),NOW())!=0")->groupBy('CustomerCode', 'Phone')->get()->toArray();
+        //$rows = DB::table('c_awoke')->whereRaw("DATEDIFF(BookingDate,NOW()) IN(30,15,7,3,1)")->whereNotIn('BusinessType', ['年审', '保险', '证件'])->whereRaw("DATEDIFF(IFNULL(PlanVisitDate,'1970-01-01 00:00:00'),NOW())!=0")->groupBy('CustomerCode', 'Phone')->get()->toArray();
+        $rows = DB::select("SELECT * FROM `c_awoke` WHERE id IN(SELECT MAX(id) AS id FROM `c_awoke` WHERE DATEDIFF(BookingDate,NOW()) IN(30,15,7,3,1) AND BusinessType NOT IN('年审', '保险', '证件') GROUP BY cid,RegisterNo,BusinessType)");
+
         // dd(DB::getQueryLog());
         Log::info('sql: ' . json_encode(DB::getQueryLog(), JSON_UNESCAPED_UNICODE));
         Log::info('data：' . json_encode($rows, JSON_UNESCAPED_UNICODE));
         if (!$rows) return false;
         // dd($rows);
-
+        $redisMembers = "remind:serviceitem:expire:" . date('Ymd');
         $time = time();
         $temps = [];
-        array_walk($rows, function ($row, $index) use ($time, &$temps) {
-            $row = get_object_vars($row);
+        $actionId=[];
+        $vehicles=[];
+        array_walk($rows, function ($row, $index) use ($time, &$temps,&$actionId,$redisMembers,&$vehicles) {
+            $isMember = $this->redis->sIsMember($redisMembers, $row['id']);
+            if ($isMember) return false;
+            // $row = get_object_vars($row);
             // 获取定时任务配置
             $cron = $this->cronConf($row['cid'], 'jobExpire');
             // 获取推送时间类型
@@ -64,6 +70,12 @@ class ServiceItem extends Remind
             if (!$check) {
                 Log::info('不符合推送设置要求: ' . $row['cid']);
                 return false;
+            }
+            $type = (isset($row['JobName'])&&$row['JobName'])?$row['JobName']:'';
+            if (!$type) return false;
+            $actionId[] = $row['id'];
+            if (!$row['PlanVisitDate'] || $row['PlanVisitDate'] || strtotime($row['PlanVisitDate']) < $time) {
+                $vehicles[] = $row['id'];
             }
             $company = $this->confRedis->hGetAll('company:' . $row['cid']);
             if (!$company) return false;
@@ -205,6 +217,12 @@ class ServiceItem extends Remind
         if (empty($this->jobData)) {
             return false;
         }
+        array_map(function ($v) use ($redisMembers) {
+            $this->redis->sAdd($redisMembers, $v);
+        }, $actionId);
+        $redisExpireTime = strtotime(date("Y-m-d", strtotime("+1 day")));
+        $this->redis->expireAt($redisMembers, $redisExpireTime);
+
         DB::beginTransaction();
         $result = DB::table('remind_job')->insert($this->jobData);
         if (!$result) {
@@ -212,11 +230,19 @@ class ServiceItem extends Remind
             DB::rollBack();
             return false;
         }
-        $result = DB::table('c_awoke')->whereRaw("DATEDIFF(BookingDate,NOW()) IN(30,15,7,3,1)")->whereRaw("DATEDIFF(IFNULL(PlanVisitDate,'1970-01-01 00:00:00'),NOW())!=0")->whereNotIn('BusinessType', ['年审', '保险', '证件'])->whereIn('HandPhone', array_column($rows, 'HandPhone'))->update(['PlanVisitDate' => date('Y-m-d')]);
-        if (false === $result) {
-            Log::info('update c_awoke PlanVisitDate fail');
-            DB::rollBack();
-            return false;
+        // $result = DB::table('c_awoke')->whereRaw("DATEDIFF(BookingDate,NOW()) IN(30,15,7,3,1)")->whereRaw("DATEDIFF(IFNULL(PlanVisitDate,'1970-01-01 00:00:00'),NOW())!=0")->whereNotIn('BusinessType', ['年审', '保险', '证件'])->whereIn('HandPhone', array_column($rows, 'HandPhone'))->update(['PlanVisitDate' => date('Y-m-d')]);
+
+        // 如果有需要更新计划回访时间的，更新
+        if (!empty($vehicles)) {
+            $result = DB::table('c_awoke')->whereIn('id', $actionId)->update(['PlanVisitDate' => date('Y-m-d')]);
+            if (!$result) {
+                Log::info('update c_awoke planvisitdate fail');
+                DB::rollBack();
+                array_map(function ($v) use ($redisMembers) {
+                    $this->redis->sRem($redisMembers, $v);
+                }, $actionId);
+                exit();
+            }
         }
         Log::info('execute sql: ' . json_encode(DB::getQueryLog(), JSON_UNESCAPED_UNICODE));
         if ($this->smsRecords) {
@@ -225,6 +251,9 @@ class ServiceItem extends Remind
             if (!$result) {
                 Log::info('insert sms record fail');
                 DB::rollBack();
+                array_map(function ($v) use ($redisMembers) {
+                    $this->redis->sRem($redisMembers, $v);
+                }, $actionId);
                 return false;
             }
         }
@@ -240,6 +269,9 @@ class ServiceItem extends Remind
             $result = $this->redis->mSet(array_merge($this->wechatList, $this->smsList));
             if (!$result) {
                 DB::rollBack();
+                array_map(function ($v) use ($redisMembers) {
+                    $this->redis->sRem($redisMembers, $v);
+                }, $actionId);
                 return false;
             }
         }
