@@ -56,9 +56,9 @@ class ServiceItem extends Remind
         $redisMembers = "remind:serviceitem:expire:" . date('Ymd');
         $time = time();
         $temps = [];
-        $actionId=[];
-        $vehicles=[];
-        array_walk($rows, function ($row, $index) use ($time, &$temps,&$actionId,$redisMembers,&$vehicles) {
+        $actionId = [];
+        $vehicles = [];
+        array_walk($rows, function ($row, $index) use ($time, &$temps, &$actionId, $redisMembers, &$vehicles) {
             $isMember = $this->redis->sIsMember($redisMembers, $row['id']);
             if ($isMember) return false;
             // $row = get_object_vars($row);
@@ -71,7 +71,7 @@ class ServiceItem extends Remind
                 Log::info('不符合推送设置要求: ' . $row['cid']);
                 return false;
             }
-            $type = (isset($row['JobName'])&&$row['JobName'])?$row['JobName']:'';
+            $type = (isset($row['JobName']) && $row['JobName']) ? $row['JobName'] : '';
             if (!$type) return false;
             $actionId[] = $row['id'];
             if (!$row['PlanVisitDate'] || $row['PlanVisitDate'] || strtotime($row['PlanVisitDate']) < $time) {
@@ -137,6 +137,7 @@ class ServiceItem extends Remind
                     'type' => 'wechat',
                     'comno' => $row['ComNo'] ?: 'A00',
                     'phone' => $row['HandPhone'],
+                    'smsnum' => 0,
                     'job' => $msg,
                 ];
 
@@ -181,11 +182,11 @@ class ServiceItem extends Remind
                 $data['content'] = $smsContent;
                 $data['phone'] = $row['HandPhone'];
                 $data['cid'] = $row['cid'];
-                $data['flag_content']=$index;
+                $data['flag_content'] = $index;
                 $data['addtime'] = $time;
                 $this->smsRecords[] = $data;
 
-                
+
                 $this->jobData[] = [
                     'cid' => $row['cid'],
                     'comno' => $row['ComNo'] ?: 'A00',
@@ -199,7 +200,7 @@ class ServiceItem extends Remind
                     'phone' => $row['HandPhone'],
                     'relation_code' => $row['AwokeListCode'],
                     'redis_key_index' => $index,
-                    'job' => $sendInfo,
+                    'job' => $smsContent,
                     'create_at' => Carbon::now()->format('Y-m-d H:i:s'),
                 ];
                 $redisIndexContent = [
@@ -207,7 +208,8 @@ class ServiceItem extends Remind
                     'type' => 'sms',
                     'comno' => $row['ComNo'] ?: 'A00',
                     'phone' => $row['HandPhone'],
-                    'job' => $sendInfo,
+                    'smsnum' => $data['sms_num'],
+                    'job' => $smsContent,
                 ];
 
                 $this->smsIndex[] = $index;

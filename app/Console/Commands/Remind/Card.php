@@ -100,6 +100,7 @@ class Card extends Remind
                         'remark' => array('value' => "\n感谢选择我们的服务！\n" . $storeInfo, 'color' => '')
                     )
                 );
+                
                 $msg = json_encode($msg, JSON_UNESCAPED_UNICODE);
                 $index = "wechat:" . md5($msg . microtime(true));
                 $this->jobData[] = [
@@ -118,14 +119,15 @@ class Card extends Remind
                     'fail_content' => '',
                     'create_at' => Carbon::now()->format('Y-m-d H:i:s'),
                 ];
+                
                 $redisIndexContent = [
                     'cid' => $row['cid'],
                     'comno' => 'A00',
                     'type' => 'wechat',
                     'phone' => $row['phone'],
+                    'smsnum'=>0,
                     'job' => $msg
                 ];
-
                 $this->redisIndex[] = $index;
                 $this->redisContent[$index] = json_encode($redisIndexContent, JSON_UNESCAPED_UNICODE);
             }

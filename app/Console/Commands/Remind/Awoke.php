@@ -67,6 +67,7 @@ class Awoke extends Remind
         $actionId = [];
         $vehicles = [];
         array_walk($rows, function ($row, $index) use ($time, &$temps, &$actionId, &$vehicles, $redisMembers) {
+            $row = json_decode(json_encode($row), true);
             $isMember = $this->redis->sIsMember($redisMembers, $row['id']);
             if ($isMember) return false;
             // 获取定时任务配置
@@ -88,7 +89,7 @@ class Awoke extends Remind
             $type = $row['BusinessType'];
             if (!$type) return false;
             $actionId[] = $row['id'];
-            if (!$row['PlanVisitDate'] || $row['PlanVisitDate'] || strtotime($row['PlanVisitDate']) < $time) {
+            if (!$row['PlanVisitDate'] || $row['PlanVisitDate']=='0000-00-00 00:00:00' || strtotime($row['PlanVisitDate']) < $time) {
                 $vehicles[] = $row['id'];
             }
 
@@ -142,6 +143,7 @@ class Awoke extends Remind
                     'type' => 'wechat',
                     'comno' => $row['ComNo'] ?: 'A00',
                     'phone' => $row['HandPhone'],
+                    'smsnum'=>0,
                     'job' => $msg,
                 ];
 
@@ -172,7 +174,7 @@ class Awoke extends Remind
                 $sendInfo = (mktime(true) * 1000) . '|' . (empty($_conf['sms_subaccount']) ? '*' : $_conf['sms_subaccount']) . '|' . $row['HandPhone'] . '|' . base64_encode(iconv('UTF-8', 'GBK//IGNORE', $smsContent));
 
                 $temps[$row['cid']][] = $sendInfo;
-                $index = "sms:" . $row['cid'] . ":" . md5($sendInfo . microtime(true));
+                $index = "sms:" . $row['cid'] . ":" . md5($smsContent . microtime(true));
 
                 $data['sms_num'] = ceil(mb_strlen($smsContent, 'UTF-8') / 60);
                 # 发送短信
@@ -201,7 +203,7 @@ class Awoke extends Remind
                     'limit_at' => $row['BookingDate'],
                     'relation_code' => $row['AwokeListCode'],
                     'redis_key_index' => $index,
-                    'job' => $sendInfo,
+                    'job' => $smsContent,
                     'create_at' => Carbon::now()->format('Y-m-d H:i:s'),
                 ];
                 $redisIndexContent = [
@@ -209,7 +211,8 @@ class Awoke extends Remind
                     'type' => 'sms',
                     'comno' => $row['ComNo'] ?: 'A00',
                     'phone' => $row['HandPhone'],
-                    'job' => $sendInfo,
+                    'smsnum'=>$data['sms_num'],
+                    'job' => $smsContent,
                 ];
                 $this->smsIndex[] = $index;
                 $this->smsList[$index] = json_encode($redisIndexContent, JSON_UNESCAPED_UNICODE);

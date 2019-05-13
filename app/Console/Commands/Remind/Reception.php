@@ -121,6 +121,7 @@ class Reception extends Remind
                     'type' => 'wechat',
                     'comno' => $row['COMNo'] ?: 'A00',
                     'phone' => $row['HandPhone'],
+                    'smsnum'=>0,
                     'job' => $msg,
                 ];
 

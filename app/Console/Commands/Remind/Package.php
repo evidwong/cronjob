@@ -120,6 +120,7 @@ class Package extends Remind
                     'type' => 'wechat',
                     'comno' => $row['COMNo'] ?: 'A00',
                     'phone' => $row['HandPhone'],
+                    'smsnum'=>0,
                     'job' => $msg,
                 ];
 
@@ -149,7 +150,7 @@ class Package extends Remind
                 }
                 $sendInfo = (mktime(true) * 1000) . '|' . (empty($_conf['sms_subaccount']) ? '*' : $_conf['sms_subaccount']) . '|' . $row['HandPhone'] . '|' . base64_encode(iconv('UTF-8', 'GBK//IGNORE', $smsContent));
                 $temps[$row['cid']][] = $sendInfo;
-                $index = "sms:" . $row['cid'] . ":" . md5($sendInfo . microtime(true));
+                $index = "sms:" . $row['cid'] . ":" . md5($smsContent . microtime(true));
                 $data['sms_num'] = ceil(mb_strlen($smsContent, 'UTF-8') / 60);
                 # 发送短信
                 $data['registerNo'] = $row['RegisterNo'];
@@ -178,7 +179,7 @@ class Package extends Remind
                     'function_code' => '',
                     'relation_code' => '',
                     'redis_key_index' => $index,
-                    'job' => $sendInfo,
+                    'job' => $smsContent,
                     'fail_content' => '',
                     'create_at' => Carbon::now()->format('Y-m-d H:i:s'),
                     'status' => 0,
@@ -189,7 +190,8 @@ class Package extends Remind
                     'type' => 'sms',
                     'comno' => $row['ComNo'] ?: 'A00',
                     'phone' => $row['HandPhone'],
-                    'job' => $sendInfo,
+                    'smsnum'=>$data['sms_num'],
+                    'job' => $smsContent,
                 ];
 
                 $this->smsIndex[] = $index;
