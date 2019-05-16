@@ -13,7 +13,7 @@ class Remind extends Command
      *
      * @var string
      */
-    // protected $signature = 'remind:base';
+    protected $signature = 'remind:base';
 
     /**
      * The console command description.
