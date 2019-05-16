@@ -52,7 +52,7 @@ class Card extends Remind
 
         $phones = [];
         array_walk($rows, function ($row, $index) use (&$phones) {
-            $row = get_object_vars($row);
+            $row = json_decode(json_encode($row), true);
             $redisSet = 'remind:couponcard:' . date('Ymd') . ':' . $row['cid'];
             $isMember = $this->redis->sIsMember($redisSet, $row['phone']);
             if ($isMember) return false;

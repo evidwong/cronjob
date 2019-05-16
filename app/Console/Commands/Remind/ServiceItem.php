@@ -59,6 +59,7 @@ class ServiceItem extends Remind
         $actionId = [];
         $vehicles = [];
         array_walk($rows, function ($row, $index) use ($time, &$temps, &$actionId, $redisMembers, &$vehicles) {
+            $row = json_decode(json_encode($row), true);
             $isMember = $this->redis->sIsMember($redisMembers, $row['id']);
             if ($isMember) return false;
             // $row = get_object_vars($row);

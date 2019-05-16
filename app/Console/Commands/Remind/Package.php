@@ -48,7 +48,7 @@ class Package extends Remind
         $MemberSetCode = [];
         $redisExpireTime = strtotime(date("Y-m-d", strtotime("+1 day")));
         array_walk($rows, function ($row, $index) use (&$MemberSetCode) {
-            $row = get_object_vars($row);
+            $row = json_decode(json_encode($row), true);
             $redisSet = 'remind:membersetsalescode:' . date('Ymd') . ':' . $row['cid'];
             $isMember = $this->redis->sIsMember($redisSet, $row['MemberSetCode']);
             if ($isMember) return false;

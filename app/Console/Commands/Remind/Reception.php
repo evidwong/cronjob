@@ -56,7 +56,7 @@ class Reception extends Remind
         $actionId = [];
         $redisExpireTime = strtotime(date("Y-m-d", strtotime("+1 day")));
         array_walk($rows, function ($row, $index) use ($receptionIdRedis, &$actionId) {
-            $row = get_object_vars($row);
+            $row = json_decode(json_encode($row), true);
             $checkRedisMember = $this->redis->sIsMember($receptionIdRedis, $row['id']);
             if ($checkRedisMember) return false;
             // 获取定时任务配置
