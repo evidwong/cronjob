@@ -1,0 +1,6 @@
+remind:awoke         年审、保险、证件到期提醒
+remind:base          提醒基础类
+remind:couponcard    卡券到期提醒
+remind:package       套餐到期提醒
+remind:reception     工单回访提醒
+remind:service_item  服务项目到期提醒
