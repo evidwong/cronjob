@@ -25,7 +25,7 @@ class Mwsms
 		$this->port = $option['sms_port'];
 		$this->username = $option['sms_account'];
 		$this->password = $option['sms_passcode'];
-		$this->channel = '';//$option['channel']?:'';
+		$this->channel = ''; //$option['channel']?:'';
 	}
 	/**
 	 * 相同短信内容，不同号码
@@ -38,6 +38,7 @@ class Mwsms
 	 */
 	function send($phone, $content, $iMobiCount = 1, $pszSubPort = false, $MsgId = false)
 	{
+		if (!$this->ip || !$this->port | !$phone | !$content) return false;
 		# 短信发送
 		$data['userId'] = $this->username;
 		$data['password'] = $this->password;
@@ -85,6 +86,7 @@ class Mwsms
 	 */
 	function sendDiff($phoneText)
 	{
+		if (!$this->ip || !$this->port | !$phoneText) return false;
 		$data['userId'] = $this->username;
 		$data['password'] = $this->password;
 		$data['multixmt'] = $phoneText;
