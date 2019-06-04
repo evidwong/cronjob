@@ -26,7 +26,12 @@ class Kernel extends ConsoleKernel
     {
         // $schedule->command('inspire')
         //          ->hourly();
-        $schedule->command('test:test')->everyFiveMinutes();
+        // $schedule->command('test:test')->everyFiveMinutes();
+        $schedule->command('remind:awoke')->daily();
+        $schedule->command('remind:couponcard')->daily();
+        $schedule->command('remind:package')->daily();
+        $schedule->command('remind:reception')->daily();
+        $schedule->command('remind:service_item')->daily();
             // ->cron('*/2 * * * *');
             // ->runInBackground();
     }
