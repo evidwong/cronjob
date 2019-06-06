@@ -42,7 +42,7 @@ class Package extends Remind
     {
         if (!$this->redis || !$this->confRedis) return false;
         DB::enableQueryLog();
-        $rows = DB::table('c_membersetsalesm')->whereRaw("TIMESTAMPDIFF(DAY,'" . date('Y-m-d H:i:s') . "',LimitDate) IN(30,15,7,3,1)")->groupBy('MemberSetCode', 'cid')->get()->toArray();
+        $rows = DB::table('c_membersetsalesm')->whereRaw("TIMESTAMPDIFF(DAY,'" . date('Y-m-d H:i:s') . "',LimitDate) IN(30,15,7,3,1) AND HandPhone IS NOT NULL AND HandPhone!=''")->groupBy('MemberSetCode', 'cid')->get()->toArray();
         Log::info('execute sql: ' . json_encode(DB::getQueryLog(), JSON_UNESCAPED_UNICODE));
         if (!$rows) return;
         $MemberSetCode = [];
