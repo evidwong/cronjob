@@ -145,6 +145,7 @@ class Awoke extends Remind
                     'phone' => $row['HandPhone'],
                     'smsnum'=>0,
                     'job' => $msg,
+                    'jobtype'=>'credentialsExpire'
                 ];
 
                 $this->wechatIndex[] = $index;

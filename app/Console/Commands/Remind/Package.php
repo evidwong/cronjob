@@ -122,6 +122,7 @@ class Package extends Remind
                     'phone' => $row['HandPhone'],
                     'smsnum'=>0,
                     'job' => $msg,
+                    'jobtype'=>'packageStatus'
                 ];
 
                 $this->wechatIndex[] = $index;
@@ -192,6 +193,7 @@ class Package extends Remind
                     'phone' => $row['HandPhone'],
                     'smsnum'=>$data['sms_num'],
                     'job' => $smsContent,
+                    'jobtype'=>'packageStatus'
                 ];
 
                 $this->smsIndex[] = $index;

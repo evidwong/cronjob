@@ -123,6 +123,7 @@ class Reception extends Remind
                     'phone' => $row['HandPhone'],
                     'smsnum'=>0,
                     'job' => $msg,
+                    'jobtype'=>'needVisit'
                 ];
 
                 $this->wechatIndex[] = $index;

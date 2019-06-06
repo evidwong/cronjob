@@ -140,6 +140,7 @@ class ServiceItem extends Remind
                     'phone' => $row['HandPhone'],
                     'smsnum' => 0,
                     'job' => $msg,
+                    'jobtype'=>'jobExpire'
                 ];
 
                 $this->wechatIndex[] = $index;
@@ -211,6 +212,7 @@ class ServiceItem extends Remind
                     'phone' => $row['HandPhone'],
                     'smsnum' => $data['sms_num'],
                     'job' => $smsContent,
+                    'jobtype'=>'jobExpire'
                 ];
 
                 $this->smsIndex[] = $index;

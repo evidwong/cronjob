@@ -126,7 +126,8 @@ class Card extends Remind
                     'type' => 'wechat',
                     'phone' => $row['phone'],
                     'smsnum'=>0,
-                    'job' => $msg
+                    'job' => $msg,
+                    'jobtype'=>'couponCard'
                 ];
                 $this->redisIndex[] = $index;
                 $this->redisContent[$index] = json_encode($redisIndexContent, JSON_UNESCAPED_UNICODE);
