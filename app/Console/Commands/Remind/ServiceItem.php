@@ -86,7 +86,8 @@ class ServiceItem extends Remind
             $expireDate = date('Y-m-d', strtotime($row['BookingDate']));
 
             $pushType = explode(',', $cron['push_type']);
-            $user = DB::table('member_openid')->where(['cid' => $row['cid'], 'phone' => $row['HandPhone']])->first();
+            // $user = DB::table('member_openid')->where(['cid' => $row['cid'], 'phone' => $row['HandPhone']])->first();
+            $user = Member::where('phone', $row['HandPhone'])->where('member.cid', $row['cid'])->with('wechat')->first();
             $tpl = $this->confRedis->hGet('wechat_template:' . $row['cid'], 'service_expire_notice');
             if ($row['ComNo']) {
                 $store = DB::table('store')->where('comno', $row['ComNo'])->where('cid', $row['cid'])->first();
@@ -105,7 +106,7 @@ class ServiceItem extends Remind
                     if ($company['tel']) $remark .= '如有问题请联系：' . $company['tel'];
                 }
                 $msg = [
-                    'touser' => $user->openid,
+                    'touser' => $user->wechat->openid,
                     'template_id' => $tpl,
                     'url' => config('app.url') . '/User/Notifycenter/index/amcc/' . $row['cid'],
                     'data' => array(
@@ -140,7 +141,7 @@ class ServiceItem extends Remind
                     'phone' => $row['HandPhone'],
                     'smsnum' => 0,
                     'job' => $msg,
-                    'jobtype'=>'jobExpire'
+                    'jobtype' => 'jobExpire'
                 ];
 
                 $this->wechatIndex[] = $index;
@@ -212,7 +213,7 @@ class ServiceItem extends Remind
                     'phone' => $row['HandPhone'],
                     'smsnum' => $data['sms_num'],
                     'job' => $smsContent,
-                    'jobtype'=>'jobExpire'
+                    'jobtype' => 'jobExpire'
                 ];
 
                 $this->smsIndex[] = $index;

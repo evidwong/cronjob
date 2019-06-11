@@ -78,12 +78,13 @@ class Package extends Remind
             $type = '套餐';
             $expireDate = date('Y-m-d', strtotime($row['LimitDate']));
             $pushType = explode(',', $cron['push_type']);
-            $user = DB::table('member_openid')->where(['cid' => $row['cid'], 'phone' => $row['HandPhone']])->first();
+            // $user = DB::table('member_openid')->where(['cid' => $row['cid'], 'phone' => $row['HandPhone']])->first();
+            $user = Member::where('phone', $row['HandPhone'])->where('member.cid', $row['cid'])->with('wechat')->first();
             $tpl = $this->confRedis->hGet('wechat_template:' . $row['cid'], 'package_status_notice');
             if ((!$pushType || in_array('wechat', $pushType)) && $user && $tpl) {
                 // 默认微信推送，或设置了有微信推送
                 $msg = [
-                    'touser' => $user->openid,
+                    'touser' => $user->wechat->openid,
                     'template_id' => $tpl,
                     'url' => config('app.url') . '/User/Package/index/amcc/' . $row['cid'],
                     'data' => array(
@@ -120,9 +121,9 @@ class Package extends Remind
                     'type' => 'wechat',
                     'comno' => $row['COMNo'] ?: 'A00',
                     'phone' => $row['HandPhone'],
-                    'smsnum'=>0,
+                    'smsnum' => 0,
                     'job' => $msg,
-                    'jobtype'=>'packageStatus'
+                    'jobtype' => 'packageStatus'
                 ];
 
                 $this->wechatIndex[] = $index;
@@ -191,9 +192,9 @@ class Package extends Remind
                     'type' => 'sms',
                     'comno' => $row['ComNo'] ?: 'A00',
                     'phone' => $row['HandPhone'],
-                    'smsnum'=>$data['sms_num'],
+                    'smsnum' => $data['sms_num'],
                     'job' => $smsContent,
-                    'jobtype'=>'packageStatus'
+                    'jobtype' => 'packageStatus'
                 ];
 
                 $this->smsIndex[] = $index;

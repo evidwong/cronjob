@@ -89,14 +89,15 @@ class Awoke extends Remind
             $type = $row['BusinessType'];
             if (!$type) return false;
             $actionId[] = $row['id'];
-            if (!$row['PlanVisitDate'] || $row['PlanVisitDate']=='0000-00-00 00:00:00' || strtotime($row['PlanVisitDate']) < $time) {
+            if (!$row['PlanVisitDate'] || $row['PlanVisitDate'] == '0000-00-00 00:00:00' || strtotime($row['PlanVisitDate']) < $time) {
                 $vehicles[] = $row['id'];
             }
 
             $expireDate = date('Y-m-d', strtotime($row['BookingDate']));
 
             $pushType = explode(',', $cron['push_type']);
-            $user = DB::table('member_openid')->where(['cid' => $row['cid'], 'phone' => $row['HandPhone']])->first();
+            // $user = DB::table('member_openid')->where(['cid' => $row['cid'], 'phone' => $row['HandPhone']])->first();
+            $user = Member::where('phone', $row['HandPhone'])->where('member.cid', $row['cid'])->with('wechat')->first();
             $tpl = $this->confRedis->hGet('wechat_template:' . $row['cid'], 'credentials_notice');
             if ((!$pushType || in_array('wechat', $pushType)) && $user && $tpl) { //
                 // 默认微信推送，或设置了有微信推送
@@ -110,7 +111,7 @@ class Awoke extends Remind
                     if ($company['tel']) $remark .= '如有问题请联系：' . $company['tel'];
                 }
                 $msg = [
-                    'touser' => $user->openid,
+                    'touser' => $user->wechat->openid,
                     'template_id' => $tpl,
                     'url' => config('app.url') . '/User/Notifycenter/index/amcc/' . $row['cid'],
                     'data' => array(
@@ -143,9 +144,9 @@ class Awoke extends Remind
                     'type' => 'wechat',
                     'comno' => $row['ComNo'] ?: 'A00',
                     'phone' => $row['HandPhone'],
-                    'smsnum'=>0,
+                    'smsnum' => 0,
                     'job' => $msg,
-                    'jobtype'=>'credentialsExpire'
+                    'jobtype' => 'credentialsExpire'
                 ];
 
                 $this->wechatIndex[] = $index;
@@ -212,7 +213,7 @@ class Awoke extends Remind
                     'type' => 'sms',
                     'comno' => $row['ComNo'] ?: 'A00',
                     'phone' => $row['HandPhone'],
-                    'smsnum'=>$data['sms_num'],
+                    'smsnum' => $data['sms_num'],
                     'job' => $smsContent,
                 ];
                 $this->smsIndex[] = $index;

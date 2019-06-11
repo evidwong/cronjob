@@ -80,12 +80,13 @@ class Reception extends Remind
             $type = '服务回访';
             $orderTime = date('Y-m-d', strtotime($reception->InDate));
             $pushType = isset($cron['push_type']) ? explode(',', $cron['push_type']) : [];
-            $user = DB::table('member_openid')->where(['cid' => $row['cid'], 'phone' => $row['phone']])->first();
+            // $user = DB::table('member_openid')->where(['cid' => $row['cid'], 'phone' => $row['phone']])->first();
+            $user = Member::where('phone', $row['phone'])->where('member.cid', $row['cid'])->with('wechat')->first();
             $tpl = $this->confRedis->hGet('wechat_template:' . $row['cid'], 'order_evaluation_notice');
             if ((!$pushType || in_array('wechat', $pushType)) && $user && $tpl) {
                 // 默认微信推送，或设置了有微信推送
                 $msg = [
-                    'touser' => $user->openid,
+                    'touser' => $user->wechat->openid,
                     'template_id' => $tpl,
                     'url' => config('app.url') . "/User/Order/detail/amcc/" . $row['cid'] . ".html?orderid=" + $reception->CReceptionCode + "&recdate=" + $reception->RecDate + "&functioncode=" + $reception->FunctionCode,
                     'data' => array(
@@ -121,9 +122,9 @@ class Reception extends Remind
                     'type' => 'wechat',
                     'comno' => $row['COMNo'] ?: 'A00',
                     'phone' => $row['HandPhone'],
-                    'smsnum'=>0,
+                    'smsnum' => 0,
                     'job' => $msg,
-                    'jobtype'=>'needVisit'
+                    'jobtype' => 'needVisit'
                 ];
 
                 $this->wechatIndex[] = $index;

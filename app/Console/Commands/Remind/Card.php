@@ -81,7 +81,8 @@ class Card extends Remind
                 if ($company['tel']) $storeInfo .= '如有问题请联系：' . $company['tel'];
             }
             $pushType = explode(',', $cron['push_type']);
-            $user = DB::table('member_openid')->where(['cid' => $row['cid'], 'phone' => $row['phone']])->first();
+            // $user = DB::table('member_openid')->where(['cid' => $row['cid'], 'phone' => $row['phone']])->first();
+            $user = Member::where('phone', $row['phone'])->where('member.cid', $row['cid'])->with('wechat')->first();
             Log::info('sql: ' . json_encode(DB::getQueryLog(), JSON_UNESCAPED_UNICODE));
             $tpl = $this->confRedis->hGet('wechat_template:' . $row['cid'], 'service_expire_notice');
             if ((!$pushType || in_array('wechat', $pushType)) && $user && $tpl) { //
@@ -90,7 +91,7 @@ class Card extends Remind
                 $customer = '尊敬的客户';
                 $num = $row['num'];
                 $msg = array(
-                    'touser' => $user->openid,
+                    'touser' => $user->wechat->openid,
                     'template_id' => $tpl,
                     'url' => $url,
                     'data' => array(
@@ -100,7 +101,7 @@ class Card extends Remind
                         'remark' => array('value' => "\n感谢选择我们的服务！\n" . $storeInfo, 'color' => '')
                     )
                 );
-                
+
                 $msg = json_encode($msg, JSON_UNESCAPED_UNICODE);
                 $index = "wechat:" . md5($msg . microtime(true));
                 $this->jobData[] = [
@@ -119,15 +120,15 @@ class Card extends Remind
                     'fail_content' => '',
                     'create_at' => Carbon::now()->format('Y-m-d H:i:s'),
                 ];
-                
+
                 $redisIndexContent = [
                     'cid' => $row['cid'],
                     'comno' => 'A00',
                     'type' => 'wechat',
                     'phone' => $row['phone'],
-                    'smsnum'=>0,
+                    'smsnum' => 0,
                     'job' => $msg,
-                    'jobtype'=>'couponCard'
+                    'jobtype' => 'couponCard'
                 ];
                 $this->redisIndex[] = $index;
                 $this->redisContent[$index] = json_encode($redisIndexContent, JSON_UNESCAPED_UNICODE);
