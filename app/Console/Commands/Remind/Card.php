@@ -82,7 +82,7 @@ class Card extends Remind
             }
             $pushType = explode(',', $cron['push_type']);
             // $user = DB::table('member_openid')->where(['cid' => $row['cid'], 'phone' => $row['phone']])->first();
-            $user = Member::where('phone', $row['phone'])->where('member.cid', $row['cid'])->with('wechat')->first();
+            $user = Member::where('phone', $row['phone'])->where('cid', $row['cid'])->with('wechat')->first();
             Log::info('sql: ' . json_encode(DB::getQueryLog(), JSON_UNESCAPED_UNICODE));
             $tpl = $this->confRedis->hGet('wechat_template:' . $row['cid'], 'service_expire_notice');
             if ((!$pushType || in_array('wechat', $pushType)) && $user && $tpl) { //

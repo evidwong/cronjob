@@ -87,7 +87,7 @@ class ServiceItem extends Remind
 
             $pushType = explode(',', $cron['push_type']);
             // $user = DB::table('member_openid')->where(['cid' => $row['cid'], 'phone' => $row['HandPhone']])->first();
-            $user = Member::where('phone', $row['HandPhone'])->where('member.cid', $row['cid'])->with('wechat')->first();
+            $user = Member::where('phone', $row['HandPhone'])->where('cid', $row['cid'])->with('wechat')->first();
             $tpl = $this->confRedis->hGet('wechat_template:' . $row['cid'], 'service_expire_notice');
             if ($row['ComNo']) {
                 $store = DB::table('store')->where('comno', $row['ComNo'])->where('cid', $row['cid'])->first();

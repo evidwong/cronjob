@@ -97,7 +97,7 @@ class Awoke extends Remind
 
             $pushType = explode(',', $cron['push_type']);
             // $user = DB::table('member_openid')->where(['cid' => $row['cid'], 'phone' => $row['HandPhone']])->first();
-            $user = Member::where('phone', $row['HandPhone'])->where('member.cid', $row['cid'])->with('wechat')->first();
+            $user = Member::where('phone', $row['HandPhone'])->where('cid', $row['cid'])->with('wechat')->first();
             $tpl = $this->confRedis->hGet('wechat_template:' . $row['cid'], 'credentials_notice');
             if ((!$pushType || in_array('wechat', $pushType)) && $user && $tpl) { //
                 // 默认微信推送，或设置了有微信推送
