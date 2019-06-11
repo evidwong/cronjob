@@ -8,6 +8,7 @@ use App\Libs\Mwsms;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Carbon;
+use App\Member;
 
 class Awoke extends Remind
 {
