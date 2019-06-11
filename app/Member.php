@@ -10,6 +10,6 @@ class Member extends Model
 
     public function wechat()
     {
-        return $this->hasOne('App\Memberwechat', 'uid', 'uid')->where('member_wechat.status', '=', 1);//->whereRaw('member.cid=member_wechat.cid');
+        return $this->hasOne('App\Memberwechat', 'uid', 'uid')->where('status', '=', 1);//->whereRaw('member.cid=member_wechat.cid');
     }
 }
