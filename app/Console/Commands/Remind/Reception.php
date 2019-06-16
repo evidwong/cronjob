@@ -81,7 +81,7 @@ class Reception extends Remind
             $remark .= '，烦请点击‘详情’对我们的服务进行评价。感谢您选择我们服务，祝生活愉快！';
             $type = '服务回访';
             $orderTime = date('Y-m-d', strtotime($reception->InDate));
-            $pushType = isset($cron['push_type']) ? explode(',', $cron['push_type']) : [];
+            $pushType = isset($cron['push_type'])?explode(',', $cron['push_type']):false;
             // $user = DB::table('member_openid')->where(['cid' => $row['cid'], 'phone' => $row['phone']])->first();
             $user = Member::where('phone', $row['phone'])->where('cid', $row['cid'])->with('wechat')->first();
             $tpl = $this->confRedis->hGet('wechat_template:' . $row['cid'], 'order_evaluation_notice');

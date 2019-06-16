@@ -81,7 +81,7 @@ class Card extends Remind
             } else {
                 if ($company['tel']) $storeInfo .= '如有问题请联系：' . $company['tel'];
             }
-            $pushType = explode(',', $cron['push_type']);
+            $pushType = isset($cron['push_type'])?explode(',', $cron['push_type']):false;
             // $user = DB::table('member_openid')->where(['cid' => $row['cid'], 'phone' => $row['phone']])->first();
             $user = Member::where('phone', $row['phone'])->where('cid', $row['cid'])->with('wechat')->first();
             Log::info('sql: ' . json_encode(DB::getQueryLog(), JSON_UNESCAPED_UNICODE));

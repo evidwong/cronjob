@@ -78,7 +78,7 @@ class Package extends Remind
             $title = '尊敬的客户，您的套餐即将到期';
             $type = '套餐';
             $expireDate = date('Y-m-d', strtotime($row['LimitDate']));
-            $pushType = explode(',', $cron['push_type']);
+            $pushType = isset($cron['push_type'])?explode(',', $cron['push_type']):false;
             // $user = DB::table('member_openid')->where(['cid' => $row['cid'], 'phone' => $row['HandPhone']])->first();
             $user = Member::where('phone', $row['HandPhone'])->where('cid', $row['cid'])->with('wechat')->first();
             $tpl = $this->confRedis->hGet('wechat_template:' . $row['cid'], 'package_status_notice');
@@ -132,7 +132,7 @@ class Package extends Remind
             }
             $time = time();
             $_conf = $this->confRedis->hGetAll('wechat_config:' . $row['cid']);
-            if (in_array('sms', $pushType) && $row['HandPhone'] &&  $_conf && $_conf['sms_account'] && $_conf['sms_passcode'] && $_conf['sms_ip']) {
+            if ($pushType && in_array('sms', $pushType) && $row['HandPhone'] &&  $_conf && $_conf['sms_account'] && $_conf['sms_passcode'] && $_conf['sms_ip']) {
                 // 短信推送
                 $data = [];
                 $smsContent = '尊敬的客户，您的 ' . $row['MemberSetName'] . ' 套餐将于' . $expireDate . '到期';

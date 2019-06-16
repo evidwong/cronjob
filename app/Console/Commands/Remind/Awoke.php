@@ -96,7 +96,7 @@ class Awoke extends Remind
 
             $expireDate = date('Y-m-d', strtotime($row['BookingDate']));
 
-            $pushType = explode(',', $cron['push_type']);
+            $pushType = isset($cron['push_type'])?explode(',', $cron['push_type']):false;
             // $user = DB::table('member_openid')->where(['cid' => $row['cid'], 'phone' => $row['HandPhone']])->first();
             $user = Member::where('phone', $row['HandPhone'])->where('cid', $row['cid'])->with('wechat')->first();
             $tpl = $this->confRedis->hGet('wechat_template:' . $row['cid'], 'credentials_notice');
@@ -154,7 +154,7 @@ class Awoke extends Remind
                 $this->wechatList[$index] = json_encode($redisIndexContent, JSON_UNESCAPED_UNICODE);
             }
             $_conf = $this->confRedis->hGetAll('wechat_config:' . $row['cid']);
-            if (in_array('sms', $pushType) && $row['HandPhone'] &&  $_conf && $_conf['sms_account'] && $_conf['sms_passcode'] && $_conf['sms_ip']) {
+            if ($pushType && in_array('sms', $pushType) && $row['HandPhone'] &&  $_conf && $_conf['sms_account'] && $_conf['sms_passcode'] && $_conf['sms_ip']) {
                 // 短信推送
                 $data = [];
                 $smsContent = $customer . '，您的：' . $row['RegisterNo'] . ' ' . $type . ' ' . $expireDate . '到期';
